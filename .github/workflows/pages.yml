@@ -60,6 +60,10 @@ jobs:
             git push
           fi
 
+      # Cada deploy muda o endereço do CSS e do JS, então o navegador nunca junta HTML novo com JS antigo
+      - name: Versionar CSS e JS
+        run: sed -i "s/?v=dev\"/?v=$(git rev-parse --short HEAD)\"/g" *.html
+
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
