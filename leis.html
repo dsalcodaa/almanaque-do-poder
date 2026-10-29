@@ -47,8 +47,13 @@
       <section class="hero">
         <p class="kicker">As leis</p>
         <h1 class="display">Leis e projetos</h1>
-        <p class="lede">O que foi aprovado na legislatura atual, quem é o autor e o que a norma faz.</p>
+        <p class="lede">O que foi aprovado na legislatura atual, quem é o autor e o que a norma faz, e o acervo de leis do Estado e dos 62 municípios.</p>
       </section>
+      <ul class="rk-abas" id="abas-leis" aria-label="Listas de leis">
+        <li><button type="button" data-aba="pol">Dos políticos atuais</button></li>
+        <li><button type="button" data-aba="acervo">Acervo do Amazonas</button></li>
+      </ul>
+      <div id="painel-pol">
       <form class="filtros" role="search" onsubmit="return false">
         <label><span>Casa</span><select id="f-casa"><option value="">Todas</option></select></label>
         <label><span>Categoria</span><select id="f-cat"><option value="">Todas</option></select></label>
@@ -58,6 +63,21 @@
       <p class="total" id="total" aria-live="polite"></p>
       <ul class="ledger ledger--normas" id="lista"><li class="muted">Carregando…</li></ul>
       <p><button class="button button--ghost" id="mais" type="button" hidden>Carregar mais</button></p>
+      </div>
+      <div id="painel-acervo" hidden>
+        <p class="muted" style="margin-top: var(--space-3);">Leis do Estado e dos municípios do Amazonas, de todas as épocas, com link para o texto oficial. Fontes: SAPL da Assembleia Legislativa, da Câmara Municipal de Manaus e de 9 câmaras do interior, e o Diário Oficial dos Municípios (AAM). Ideia e método inspirados nos acervos <a href="https://github.com/leonzordhue/leismunicipais" target="_blank" rel="noopener">leismunicipais</a> e <a href="https://github.com/leonzordhue/leisestaduais" target="_blank" rel="noopener">leisestaduais</a>.</p>
+        <form class="filtros" role="search" onsubmit="return false">
+          <label><span>Onde</span><select id="a-lugar"></select></label>
+          <label><span>Tipo</span><select id="a-tipo"><option value="">Todos</option></select></label>
+          <label><span>Categoria</span><select id="a-cat"><option value="">Todas</option></select></label>
+          <label><span>Ano</span><select id="a-ano"><option value="">Todos</option></select></label>
+          <label><span>Buscar</span><input id="a-busca" type="search" placeholder="Ementa ou número" autocomplete="off"></label>
+        </form>
+        <p class="total" id="a-total" aria-live="polite"></p>
+        <ul class="ledger ledger--normas" id="a-lista"></ul>
+        <p><button class="button button--ghost" id="a-mais" type="button" hidden>Carregar mais</button></p>
+        <p class="muted">O texto da lei vale como publicado na fonte oficial. A categoria é deduzida da ementa. No diário da AAM, a ementa é lida do texto publicado e pode faltar; no SAPL, é a cadastrada pela câmara.</p>
+      </div>
     </main>
 
     <footer class="site-footer">

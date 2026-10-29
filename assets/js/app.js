@@ -600,7 +600,71 @@
   }
 
   // ---------- leis e projetos ----------
+  function nomeLei(tipo, numero, ano) {
+    tipo = tipo || "Lei";
+    if (!numero || numero === "s/n") return esc(tipo) + (ano ? " de " + ano : "");
+    return esc(tipo) + " nº " + esc(numero) + (ano ? "/" + ano : "");
+  }
+  function linhaLei(r, lugar) {
+    return '<li><span class="ledger__key">' + (r[2] || "—") + "</span><span>" +
+      '<a href="' + esc(r[6]) + '" target="_blank" rel="noopener"><strong>' + nomeLei(r[0], r[1], r[2]) + "</strong></a>" +
+      (lugar ? ' <span class="muted">· ' + esc(lugar) + "</span>" : "") +
+      (r[4] ? '<span class="ledger__sub">' + esc(r[4].length > 280 ? r[4].slice(0, 280) + "…" : r[4]) + "</span>" : '<span class="ledger__sub muted">Ementa não identificada; veja o texto na fonte.</span>') +
+      (r[5] ? ' <span class="tag' + (HOMENAGENS.indexOf(r[5]) >= 0 ? " tag--accent" : "") + '">' + esc(r[5]) + "</span>" : "") +
+      ' <span class="muted" style="font-size:0.75rem">' + esc(r[7]) + "</span></span></li>";
+  }
+  function paginaAcervo() {
+    var fLugar = $("#a-lugar"), fTipo = $("#a-tipo"), fCat = $("#a-cat"), fAno = $("#a-ano"), fBusca = $("#a-busca"), lista = $("#a-lista"), total = $("#a-total"), mais = $("#a-mais");
+    if (lista.getAttribute("data-ok")) return;
+    lista.setAttribute("data-ok", "1");
+    var limite = 50, dados = [];
+    carregar("leis/resumo.json").then(function (res) {
+      var ks = Object.keys(res).filter(function (k) { return k !== "estado"; }).sort(function (a, b) { return res[a].nome.localeCompare(res[b].nome, "pt"); });
+      fLugar.innerHTML = '<option value="estado">Estado do Amazonas (' + num(res.estado ? res.estado.total : 0) + " leis)</option>" +
+        ks.map(function (k) { return '<option value="' + k + '">' + esc(res[k].nome) + " (" + num(res[k].total) + ")</option>"; }).join("");
+      if (param("m") && res[param("m")]) fLugar.value = param("m");
+      function render() {
+        var t = fTipo.value, ct = fCat.value, a = fAno.value, q = semAcento(fBusca.value.trim());
+        var f = dados.filter(function (r) {
+          return (!t || r[0] === t) && (!ct || r[5] === ct) && (!a || String(r[2]) === a) && (!q || semAcento(r[1] + " " + r[4]).indexOf(q) >= 0);
+        });
+        total.textContent = num(f.length) + (f.length === 1 ? " lei" : " leis");
+        lista.innerHTML = f.slice(0, limite).map(function (r) { return linhaLei(r); }).join("") || '<li class="muted">Nenhuma lei com esses filtros.</li>';
+        mais.hidden = f.length <= limite;
+      }
+      function carregarLugar() {
+        lista.innerHTML = '<li class="muted">Carregando…</li>';
+        carregar("leis/" + fLugar.value + ".json").then(function (d) {
+          dados = d;
+          var opc = function (el, vals, rot) { el.innerHTML = '<option value="">' + rot + "</option>" + vals.map(function (v) { return '<option value="' + esc(v) + '">' + esc(v) + "</option>"; }).join(""); };
+          opc(fTipo, Array.from(new Set(d.map(function (r) { return r[0]; }))).filter(Boolean).sort(), "Todos");
+          opc(fCat, Array.from(new Set(d.map(function (r) { return r[5]; }))).filter(Boolean).sort(), "Todas");
+          opc(fAno, Array.from(new Set(d.map(function (r) { return r[2]; }))).filter(Boolean).sort().reverse(), "Todos");
+          limite = 50;
+          render();
+        }).catch(function (e) { erro(lista, e); });
+      }
+      fLugar.addEventListener("change", carregarLugar);
+      [fTipo, fCat, fAno].forEach(function (el) { el.addEventListener("change", function () { limite = 50; render(); }); });
+      fBusca.addEventListener("input", function () { limite = 50; render(); });
+      mais.addEventListener("click", function () { limite += 100; render(); });
+      carregarLugar();
+    }).catch(function (e) { erro(lista, e); });
+  }
+
   function paginaLeis() {
+    var abas = $("#abas-leis");
+    if (abas) {
+      var trocar = function (aba) {
+        [].forEach.call(abas.querySelectorAll("button"), function (b) { b.setAttribute("aria-pressed", String(b.getAttribute("data-aba") === aba)); });
+        $("#painel-pol").hidden = aba !== "pol";
+        $("#painel-acervo").hidden = aba !== "acervo";
+        if (aba === "acervo") paginaAcervo();
+        history.replaceState(null, "", "leis.html" + (aba === "acervo" ? "?aba=acervo" + (param("m") ? "&m=" + param("m") : "") : ""));
+      };
+      abas.addEventListener("click", function (e) { var b = e.target.closest("button"); if (b) trocar(b.getAttribute("data-aba")); });
+      trocar(param("aba") === "acervo" ? "acervo" : "pol");
+    }
     var lista = $("#lista"), fCasa = $("#f-casa"), fCat = $("#f-cat"), fAno = $("#f-ano"), fBusca = $("#f-busca"), total = $("#total"), mais = $("#mais");
     var POR_PAGINA = 50, limite = POR_PAGINA;
     Promise.all([carregar("normas.json"), carregar("politicos.json")]).then(function (r) {
@@ -984,6 +1048,7 @@
         }
         h += "</section>";
 
+        h += '<div id="leis-mun"></div>';
         h += '<section class="section"><p class="kicker">Linha do tempo</p><h2 class="h2">Prefeitos e câmaras eleitos</h2><ol class="linha">' + anos.map(function (a) {
           var e = m.eleicoes[a], partidos = {};
           e.vereadores.forEach(function (v) { partidos[v.partido || "?"] = (partidos[v.partido || "?"] || 0) + 1; });
@@ -998,6 +1063,27 @@
             }).join("") + "</ul></details></div></li>";
         }).join("") + '</ol><p class="muted">Fonte: TSE, candidaturas e resultado de cada eleição municipal desde 2000. Cassações e posses de suplentes depois da eleição não aparecem.</p></section>';
         alvo.innerHTML = h;
+        carregar("leis/resumo.json").then(function (res) {
+          var box = $("#leis-mun"), x = res[k];
+          if (!box) return;
+          if (!x) {
+            box.outerHTML = '<section class="section"><p class="kicker">Leis</p><h2 class="h2">Leis do município</h2><p class="prose">Nenhuma lei de ' + esc(m.nome) + " encontrada no SAPL da câmara nem no Diário Oficial dos Municípios.</p></section>";
+            return;
+          }
+          var obrigado = x.populacao && x.populacao > 20000;
+          var doc = function (rot, d, extra) {
+            return '<li><span class="ledger__key">' + rot + "</span><span>" + (d ? '<a href="' + esc(d[4]) + '" target="_blank" rel="noopener">' + nomeLei(d[0], d[1], d[2]) + "</a>" + (d[3] ? '<span class="ledger__sub">' + esc(d[3]) + "</span>" : "") : "<strong>Não encontrada no acervo.</strong>" + (extra || "")) + "</span></li>";
+          };
+          box.outerHTML = '<section class="section"><p class="kicker">Leis</p><h2 class="h2">Leis do município</h2>' +
+            '<ul class="pillars"><li class="pillar"><span class="pillar__index">' + num(x.total) + '</span><p class="pillar__text">leis no acervo (' + esc(x.fontes.join(" e ")) + ")</p></li>" +
+            (x.classificadas ? '<li class="pillar"><span class="pillar__index pillar__index--accent">' + pct(x.homenagens, x.classificadas) + '</span><p class="pillar__text">são homenagens: títulos, datas comemorativas, nomes de rua e utilidade pública</p></li>' : "") +
+            (x.populacao ? '<li class="pillar"><span class="pillar__index">' + num(x.populacao) + '</span><p class="pillar__text">habitantes (Censo 2022)</p></li>' : "") + "</ul>" +
+            '<ul class="ledger">' + doc("Lei Orgânica", x.lei_organica) +
+            doc("Plano Diretor", x.plano_diretor, obrigado ? ' <span class="ledger__sub">Com mais de 20 mil habitantes, o município é obrigado a ter plano diretor (Estatuto da Cidade, art. 41). Ele pode existir sem ter sido publicado nas fontes consultadas.</span>' : "") + "</ul>" +
+            '<h3 class="sub-graf">Leis por ano</h3>' + colunas(x.por_ano, num) +
+            '<h3 class="sub-graf">Mais recentes</h3><ul class="ledger ledger--normas">' + x.ultimas.map(function (r) { return linhaLei(r); }).join("") + "</ul>" +
+            '<p><a class="button button--ghost" href="leis.html?aba=acervo&m=' + k + '">Ver todas as leis de ' + esc(m.nome) + "</a></p></section>";
+        }).catch(function () {});
       }
       fMun.addEventListener("change", render);
       render();

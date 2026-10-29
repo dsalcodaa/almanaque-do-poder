@@ -57,6 +57,7 @@ python -m http.server 8000
 | Votos, presença e cota dos senadores | Dados abertos do Senado (votações nominais e CEAPS) |
 | Histórico de todos os candidatos e municípios | TSE, candidaturas, bens, votação e fotos desde 2000 (`tse_historico`) |
 | Nome de fornecedores ocultos | BrasilAPI (base de CNPJ da Receita), cache em `data/fontes/cnpj.json` |
+| Acervo de leis do AM | SAPL (ALEAM, CMM e 9 câmaras) e Diário Oficial dos Municípios (AAM), incremental (`acervo_leis`); inspirado em leonzordhue/leismunicipais e leisestaduais |
 | Financiamento de campanha | TSE, prestação de contas dos candidatos desde 2018 (`doacoes`; lê só o CSV do AM dentro do zip nacional) |
 | Tribunais e Ministério Público | DadosJusBr (TJAM, MPAM, TRT-11, TRE-AM) e contracheques em PDF do TCE-AM; coleta semestral |
 | Votos por município e bairro | TSE: `votacao_candidato_munzona`, `votacao_secao` e locais de votação (`votos_territorio`) |

@@ -62,7 +62,11 @@ def baixar(url: str, timeout: int = 90, tentativas: int = 3) -> bytes:
         try:
             req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept": "application/json"})
             with urllib.request.urlopen(req, timeout=timeout) as r:
-                return r.read()
+                dados = r.read()
+            if dados[:2] == b"\x1f\x8b":  # alguns servidores (IBGE) respondem compactado mesmo sem pedido
+                import gzip
+                dados = gzip.decompress(dados)
+            return dados
         except Exception as e:  # noqa: BLE001
             erro = e
             time.sleep(2 * (i + 1))
@@ -2022,6 +2026,238 @@ def coletar_tceam() -> dict:
             "nota": "O TCE-AM publica um contracheque em PDF por membro e por mês; o site lê cada arquivo. Inclui os procuradores do Ministério Público de Contas."}
 
 
+# ------------------------------------------------- acervo de leis do Amazonas
+
+ACERVO_SAPL = {
+    "estado": "https://sapl.al.am.leg.br",
+    "manaus": "https://sapl.cmm.am.gov.br",
+    "coari": "https://sapl.coari.am.leg.br",
+    "codajas": "https://sapl.codajas.am.leg.br",
+    "envira": "https://sapl.envira.am.leg.br",
+    "iranduba": "https://sapl.iranduba.am.leg.br",
+    "manacapuru": "https://sapl.manacapuru.am.leg.br",
+    "manicore": "https://sapl.manicore.am.leg.br",
+    "novo-airao": "https://sapl.novoairao.am.leg.br",
+    "parintins": "https://sapl.parintins.am.leg.br",
+    "tefe": "https://sapl.tefe.am.leg.br",
+}
+AAM = "https://www.diariomunicipal.com.br/aam"
+UA_AAM = {"User-Agent": "AlmanaqueDoPoder/1.0 (acervo de leis do Amazonas; consulta pausada)"}
+
+
+def tipo_lei(texto: str) -> str | None:
+    """Tipo canônico da norma, ou None se não for lei (projeto, decreto, resolução, veto...)."""
+    t = sem_acento(texto).upper().strip()
+    if re.match(r"\W*(PROJETO|MENSAGEM|VETO|AUTOGRAFO|ERRATA|AVISO|EXTRATO|DECRETO|RESOLU|PORTARIA|REGIMENTO|ATO\b|INDICA|REQUERIMENTO)", t):
+        return None
+    for rx, nome in ((r"EMENDA\s+(A\s+)?(LEI\s+)?ORGANICA", "Emenda à Lei Orgânica"), (r"EMENDA\s+CONSTITUCIONAL|EMENDA\s+A\s+CONSTITUICAO", "Emenda Constitucional"),
+                     (r"CONSTITUICAO", "Constituição"), (r"LEI\s+ORGANICA", "Lei Orgânica"), (r"LEI\s+COMPLEMENTAR", "Lei Complementar"),
+                     (r"LEI\s+PROMULGADA", "Lei Promulgada"), (r"LEI\s+DELEGADA", "Lei Delegada"), (r"LEI\b", "Lei Ordinária")):
+        if re.match(r"\W*" + rx, t):
+            return nome
+    return None
+
+
+def acervo_sapl(base: str) -> list[list]:
+    tipos = {t["id"]: t.get("descricao") or t.get("sigla") or "" for t in sapl_paginas(base, "/api/norma/tiponormajuridica/")}
+    linhas = []
+    for n in sapl_paginas(base, "/api/norma/normajuridica/"):
+        tipo = tipo_lei(tipos.get(n.get("tipo"), ""))
+        if not tipo:
+            continue
+        ano = n.get("ano")
+        data = n.get("data") or ""
+        if ano and data[:4] != str(ano):  # algumas câmaras cadastraram a data errada; vale o ano da lei
+            data = ""
+        ementa = re.sub(r"\s+", " ", n.get("ementa") or "").strip()
+        linhas.append([tipo, str(n.get("numero") or "").lstrip("0") or "s/n", ano, data, ementa, categoria(ementa) if ementa else "",
+                       f"{base}/norma/{n['id']}", "SAPL"])
+    return linhas
+
+
+def aam_get(url: str) -> str:
+    time.sleep(0.8)  # o diário é de uma associação de municípios: uma requisição por vez, com pausa
+    req = urllib.request.Request(url, headers=UA_AAM)
+    for i in range(3):
+        try:
+            return urllib.request.urlopen(req, timeout=60).read().decode("utf-8", "replace")
+        except Exception:  # noqa: BLE001
+            if i == 2:
+                raise
+            time.sleep(10 * (i + 1))
+    return ""
+
+
+def ementa_aam(pagina: str, titulo: str) -> str:
+    m = re.search(r'id="materia"[^>]*>(.*?)(?:</article>|<footer)', pagina, re.S)
+    if not m:
+        return ""
+    corpo = re.sub(r"<style.*?</style>", "", m.group(1), flags=re.S)
+    blocos = re.split(r"</p>|<br\s*/?>|</h\d>|</div>", corpo)
+    chave = sem_acento(titulo).upper()[:14]
+    for b in blocos[:14]:
+        t = re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]+>", " ", b))).strip(" *_-–")
+        if (len(t) < 20 or sem_acento(t).upper().startswith(chave)
+                or re.match(r"(?i)(procuradoria|gabinete|secretaria|camara municipal|prefeitura|estado do amazonas|municipio de)", sem_acento(t))
+                or re.fullmatch(r"(?i)[,.\s]*(de\s+)?\d{1,2}\s*(º|o)?\s+de\s+\w+\s+de\s+\d{4}[.,\s]*", sem_acento(t))):
+            continue
+        if re.match(r"(?i)(o|a)\s+(prefeit|president|cidad|camara|vice)|fa[cç]o saber|faz saber|art\.?\s*1", t):
+            break
+        return t[:600]
+    return ""
+
+
+def acervo_aam(cache: dict) -> dict:
+    """Leis publicadas no Diário Oficial dos Municípios do AM (61 municípios, sem Manaus). Incremental."""
+    pagina = aam_get(AAM + "/pesquisar")
+    corpo = re.search(r'name="busca_avancada\[entidade\]"[^>]*>(.*?)</select>', pagina, re.S)
+    if not corpo:
+        raise RuntimeError("lista de entidades do diário da AAM não encontrada")
+    ents = [(i, html.unescape(n).strip()) for i, n in re.findall(r'<option value="(\d+)"[^>]*>([^<]*)', corpo.group(1))]
+    ents = [e for e in ents if e[1].startswith(("Município de", "Câmara Municipal de"))]
+    desde = cache.get("_ate") and (date.fromisoformat(cache["_ate"]) - timedelta(days=15)).isoformat() or "2009-01-01"
+    hoje = date.today().isoformat()
+    for eid, nome in ents:
+        mun = re.sub(r"^(Município de|Câmara Municipal de)\s+", "", nome)
+        pag, vistos = 1, 0
+        while True:
+            q = {"busca_avancada[dataInicio]": desde, "busca_avancada[dataFim]": hoje, "busca_avancada[titulo]": "LEI",
+                 "busca_avancada[entidade]": eid, "busca_avancada[ordenacao]": "", "busca_avancada[pagina]": str(pag), "busca_avancada[Enviar]": ""}
+            p = aam_get(AAM + "/pesquisar?" + urllib.parse.urlencode(q))
+            m = re.search(r"de <strong>([\d\.]+)</strong>\s*matérias", p)
+            total = int(m.group(1).replace(".", "")) if m else 0
+            cards = re.findall(r'<li class="materia-card">(.*?)</li>', p, re.S)
+            for card in cards:
+                def campo(rx):
+                    mm = re.search(rx, card, re.S)
+                    return html.unescape(re.sub(r"\s+", " ", mm.group(1))).strip() if mm else ""
+                cod = campo(r"<code>([^<]+)</code>")
+                titulo = re.sub(r"<[^>]+>", "", campo(r'materia-card__titulo">\s*<a[^>]*>(.*?)</a>'))
+                if cod and cod not in cache and tipo_lei(titulo):
+                    cache[cod] = {"municipio": mun, "titulo": titulo, "circulacao": campo(r"<dt>Circulação</dt>\s*<dd>(.*?)</dd>")}
+            vistos += len(cards)
+            if not cards or vistos >= total:
+                break
+            pag += 1
+    pendentes = [k for k, v in cache.items() if not k.startswith("_") and "ementa" not in v]
+    log(f"[acervo_leis] diário da AAM: {len(pendentes)} leis novas para ler")
+    for i, cod in enumerate(pendentes):
+        try:
+            cache[cod]["ementa"] = ementa_aam(aam_get(f"{AAM}/materia/{cod}"), cache[cod]["titulo"])
+        except Exception as e:  # noqa: BLE001
+            log(f"[acervo_leis] AAM {cod}: {e}")
+        if i % 200 == 199:
+            salvar("fontes/acervo_aam.json", cache)
+            log(f"[acervo_leis] AAM: {i + 1} de {len(pendentes)}")
+    cache["_ate"] = hoje
+    salvar("fontes/acervo_aam.json", cache)
+    return cache
+
+
+def coletar_acervo_leis() -> dict:
+    """Acervo de leis do Estado e dos municípios: SAPL da ALEAM, da CMM e de 9 câmaras, mais o diário da AAM.
+
+    Inspirado no acervo de leonzordhue/leismunicipais e leonzordhue/leisestaduais, coletado das fontes oficiais."""
+    por_lugar: dict = defaultdict(list)
+    for lugar, base in ACERVO_SAPL.items():
+        try:
+            linhas = acervo_sapl(base)
+            por_lugar[lugar] += linhas
+            log(f"[acervo_leis] {lugar}: {len(linhas)} leis no SAPL")
+        except Exception as e:  # noqa: BLE001
+            log(f"[acervo_leis] {lugar}: {e}")
+            antigo = ler(f"leis/{lugar}.json")
+            if antigo:
+                por_lugar[lugar] += [r for r in antigo if r[7] == "SAPL"]
+    cache = ler("fontes/acervo_aam.json") or {}
+    try:
+        cache = acervo_aam(cache)
+    except Exception as e:  # noqa: BLE001
+        log(f"[acervo_leis] diário da AAM: {e} — mantendo o que já foi lido")
+    nomes_mun = {}
+    for cod, v in cache.items():
+        if cod.startswith("_"):
+            continue
+        lugar = slug(NOMES_UE.get(sem_acento(v["municipio"]).upper(), v["municipio"]))
+        nomes_mun[lugar] = v["municipio"]
+        t = v["titulo"]
+        num = re.search(r"N[º°oO.]*\s*(\d[\d\.]*)", t, re.I)
+        ano = re.search(r"[/\-–]\s*(\d{4})\b|\bDE\s+(\d{4})\b", t, re.I)
+        dt = v.get("circulacao") or ""
+        ano_v = int(next(g for g in ano.groups() if g)) if ano else (int(dt[-4:]) if re.match(r"\d\d/\d\d/\d{4}", dt) else None)
+        if str(v.get("ano") or "").isdigit():
+            ano_v = int(v["ano"])
+        numero = v.get("numero") or ((num.group(1).replace(".", "").lstrip("0") or "0") if num else "s/n")
+        ementa = v.get("ementa") or ""
+        if re.fullmatch(r"(?i)[,.\s]*(de\s+)?\d{1,2}\s*(º|o)?\s+de\s+\w+\s+de\s+\d{4}[.,\s]*", ementa):
+            ementa = ""  # só a data da lei, sem ementa
+        por_lugar[lugar].append([v.get("tipo") or tipo_lei(t), numero, ano_v, "", ementa, categoria(ementa) if ementa else "",
+                                 v.get("url") or f"{AAM}/materia/{cod}", v.get("fonte_nome") or "DOM-AAM"])
+
+    pop = {}
+    try:
+        r = jget("https://servicodados.ibge.gov.br/api/v3/agregados/4709/periodos/2022/variaveis/93?localidades=N6[N3[13]]")
+        for x in r[0]["resultados"][0]["series"]:
+            pop[slug(x["localidade"]["nome"].rsplit(" - ", 1)[0])] = int(x["serie"]["2022"])
+    except Exception as e:  # noqa: BLE001
+        log(f"[acervo_leis] população IBGE: {e}")
+
+    pasta = DADOS / "leis"
+    pasta.mkdir(parents=True, exist_ok=True)
+    resumo = {}
+    total = 0
+    for lugar, linhas in por_lugar.items():
+        # a mesma lei pode vir do SAPL e do diário: fica a do SAPL (ementa cadastrada pela câmara)
+        unicas, vistas = [], set()
+        for r in sorted(linhas, key=lambda r: r[7] != "SAPL"):
+            k = (r[0], r[1], r[2])
+            if r[1] != "s/n" and k in vistas:
+                continue
+            vistas.add(k)
+            unicas.append(r)
+        unicas.sort(key=lambda r: (-(r[2] or 0), -(int(r[1]) if str(r[1]).isdigit() else 0)))
+        salvar(f"leis/{lugar}.json", unicas)
+        total += len(unicas)
+        por_ano = Counter(str(r[2]) for r in unicas if r[2])
+        cats = Counter(r[5] for r in unicas if r[5])
+
+        mudanca = r"\W*(altera|acrescenta|modifica|revoga|regulamenta|da nova redacao|inclui)"
+
+        def lei_organica():
+            # vale a lei do tipo Lei Orgânica cuja ementa fala dela (há câmaras que cadastram outras leis com esse tipo)
+            cands = [r for r in unicas if r[0] == "Lei Orgânica" and not re.match(mudanca, sem_acento(r[4]))]
+            boas = [r for r in cands if not re.match(r"\W*(autoriza|concede|denomina|declara|cria|fixa|estima|abre|institui o dia|reconhece)", sem_acento(r[4]))]
+            falam = [r for r in boas if "organica" in sem_acento(r[4])]
+            boas = falam or boas
+            r = max(boas, key=lambda r: r[2] or 0) if boas else None
+            return [r[0], r[1], r[2], r[4][:160], r[6]] if r else None
+
+        def plano_diretor():
+            for r in sorted(unicas, key=lambda r: -(r[2] or 0)):
+                e = sem_acento(r[4])
+                if not re.match(mudanca, e) and re.search(r"(institu\w*|dispoe sobre|aprova)\W+(a revisao d)?o?\W*(novo )?plano diretor", e):
+                    return [r[0], r[1], r[2], r[4][:160], r[6]]
+            # sem a lei principal no acervo: usa a citada nas leis que a alteram
+            for r in unicas:
+                m = re.search(r"(lei complementar|lei)\W+n\W*0*(\d+)\W+de\W+\d+\W+de\W+\w+\W+de\W+(\d{4})\W+que dispoe sobre (o )?plano diretor", sem_acento(r[4]))
+                if m:
+                    return [m.group(1).title(), m.group(2), int(m.group(3)), "Citada em lei que a altera; o texto original não está no acervo.", r[6]]
+            return None
+
+        resumo[lugar] = {
+            "nome": "Estado do Amazonas" if lugar == "estado" else nomes_mun.get(lugar) or lugar.replace("-", " ").title(),
+            "total": len(unicas), "por_ano": dict(sorted(por_ano.items())), "categorias": dict(cats.most_common()),
+            "homenagens": sum(v for k, v in cats.items() if k in HOMENAGENS), "classificadas": sum(cats.values()),
+            "fontes": sorted({r[7] for r in unicas}), "populacao": pop.get(lugar),
+            "lei_organica": None if lugar == "estado" else lei_organica(),
+            "plano_diretor": None if lugar == "estado" else plano_diretor(),
+            "ultimas": [r for r in unicas[:8]],
+        }
+    salvar("leis/resumo.json", resumo)
+    log(f"[acervo_leis] {total} leis em {len(resumo)} lugares")
+    return {"leis": total, "lugares": len(resumo)}
+
+
 # ------------------------------------------------------------------ main
 
 FONTES_INFO = {
@@ -2040,6 +2276,7 @@ FONTES_INFO = {
     "tse_historico": ("TSE — Candidaturas, bens, votos e fotos do Amazonas desde 2000", "https://dadosabertos.tse.jus.br"),
     "doacoes": ("TSE — Prestação de contas: quem financiou as campanhas (2018 em diante)", "https://dadosabertos.tse.jus.br/dataset/?q=prestacao+de+contas"),
     "votos_territorio": ("TSE — Votos por município e por bairro", "https://dadosabertos.tse.jus.br/dataset/?q=votacao+secao"),
+    "acervo_leis": ("Acervo de leis: SAPL da ALEAM, da CMM e das câmaras, e Diário Oficial dos Municípios (AAM)", "https://www.diariomunicipal.com.br/aam/"),
     "tribunais": ("DadosJusBr e TCE-AM — Remuneração de membros do sistema de Justiça (coleta semestral)", "https://dadosjusbr.org"),
     "diarios": ("Diários oficiais: ALEAM, Câmara Municipal de Manaus e Estado do Amazonas", "https://diario.imprensaoficial.am.gov.br"),
 }
@@ -2064,6 +2301,7 @@ def main() -> int:
         "tribunais": coletar_tribunais,
         "tse_historico": coletar_tse_historico,  # sob demanda, lê os arquivos do TSE em .cache
         "doacoes": coletar_doacoes,  # sob demanda, depois do histórico
+        "acervo_leis": coletar_acervo_leis,
         "votos_territorio": coletar_votos_territorio,  # sob demanda, depois do histórico
         "eleicoes": coletar_eleicoes,  # sob demanda
     }
