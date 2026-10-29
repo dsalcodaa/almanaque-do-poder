@@ -576,6 +576,34 @@ def resumo_cota(notas: list[dict]) -> dict:
     }
 
 
+def nome_mascarado(nome: str | None) -> bool:
+    return not nome or bool(re.fullmatch(r"[\s*.\-]*", nome)) or nome.count("*") >= 3
+
+
+def nomear_fornecedores(notas: list[dict], politicos: list[dict]) -> None:
+    """Completa fornecedores sem nome (ou mascarados) pela razão social do CNPJ na BrasilAPI (dados da Receita)."""
+    cache = ler("fontes/cnpj.json", {}) or {}
+    faltam = sorted({n["cnpj"] for n in notas if n.get("cnpj") and nome_mascarado(n.get("fornecedor")) and n["cnpj"] not in cache})
+    for cnpj in faltam[:400]:  # limite por coleta, para respeitar a API
+        try:
+            d = jget(f"https://brasilapi.com.br/api/cnpj/v1/{cnpj}", timeout=30)
+            cache[cnpj] = d.get("nome_fantasia") or d.get("razao_social") or None
+        except Exception as e:  # noqa: BLE001
+            log(f"[cnpj] {cnpj}: {e}")
+        time.sleep(0.4)
+    if faltam:
+        salvar("fontes/cnpj.json", cache)
+        log(f"[cnpj] {len(faltam)} CNPJs consultados na BrasilAPI")
+    for n in notas:
+        if nome_mascarado(n.get("fornecedor")) and cache.get(n.get("cnpj")):
+            n["fornecedor"] = cache[n["cnpj"]]
+    for p in politicos:
+        for ano in (p.get("cota") or {}).values():
+            for f in ano.get("fornecedores", []):
+                if nome_mascarado(f.get("nome")) and cache.get(f.get("cnpj")):
+                    f["nome"] = cache[f["cnpj"]]
+
+
 def categoria_cota(texto: str) -> str:
     t = sem_acento(texto)
     regras = [
@@ -643,7 +671,8 @@ def coletar_ceap_cmm() -> dict:
                         "mes": int(data[5:7]) if data else 0,
                         "data": data,
                         "categoria": categoria_cota(n.get("item_despesa") or ""),
-                        "fornecedor": (n.get("nome_fantasia") or n.get("fornecedor") or "").strip(),
+                        "fornecedor": next((x.strip() for x in (n.get("nome_fantasia"), n.get("fornecedor"), n.get("razao_social"))
+                                            if x and not nome_mascarado(x)), ""),
                         "cnpj": n.get("cnpj") or None,
                         "valor": float(n.get("valor") or 0),
                         "documento": n.get("numero_documento"),
@@ -1150,6 +1179,366 @@ def coletar_eleicoes() -> dict:
     return {"eleicoes": saida}
 
 
+# ------------------------------------------------ Presença no Plenário (SAPL)
+
+def presenca_sapl(casa: str, base: str) -> dict:
+    """Presença de cada parlamentar nas sessões ordinárias e extraordinárias, desde 2023.
+
+    A sessão só conta quando a Casa registrou alguma presença nela. O período esperado de cada
+    parlamentar é o do mandato, encerrado 45 dias após a última presença registrada (licença,
+    afastamento ou cargo no Executivo deixam de contar como falta depois disso)."""
+    tipos = {t["id"] for t in sapl_paginas(base, "/api/sessao/tiposessaoplenaria/")
+             if re.search(r"ordinaria|extraordinaria", sem_acento(t["nome"]))}
+    sessoes = {s["id"]: s["data_inicio"] for s in sapl_paginas(base, "/api/sessao/sessaoplenaria/", {"data_inicio__gte": "2023-01-01"})
+               if s.get("tipo") in tipos and s.get("data_inicio")}
+    presentes = defaultdict(set)
+    for p in sapl_paginas(base, "/api/sessao/sessaoplenariapresenca/", workers=6):
+        if p.get("sessao_plenaria") in sessoes:
+            presentes[p["parlamentar"]].add(p["sessao_plenaria"])
+    com_registro = set().union(*presentes.values()) if presentes else set()
+    datas = sorted((sessoes[s], s) for s in com_registro)
+    saida = {}
+    for m in sapl_paginas(base, "/api/parlamentares/mandato/"):
+        pid = m["parlamentar"]
+        if not presentes.get(pid) or not m.get("data_inicio_mandato"):
+            continue
+        ultima = max(sessoes[s] for s in presentes[pid])
+        fim = min(m.get("data_fim_mandato") or "9999", (date.fromisoformat(ultima) + timedelta(days=45)).isoformat())
+        ano_dados = saida.setdefault(f"{casa}-{pid}", {})
+        for d, s in datas:
+            if m["data_inicio_mandato"] <= d <= fim:
+                a = ano_dados.setdefault(d[:4], {"presente": 0, "sessoes": 0, "_vistas": set()})
+                if s in a["_vistas"]:
+                    continue
+                a["_vistas"].add(s)
+                a["sessoes"] += 1
+                a["presente"] += s in presentes[pid]
+    for anos in saida.values():
+        for a in anos.values():
+            a.pop("_vistas")
+    log(f"[presenca_{casa}] {len(com_registro)} sessões com registro, {len(saida)} parlamentares")
+    return saida
+
+
+def coletar_presenca() -> dict:
+    return {"presenca": {**presenca_sapl("cmm", "https://sapl.cmm.am.gov.br"),
+                         **presenca_sapl("aleam", "https://sapl.al.am.leg.br")}}
+
+
+# ------------------------------------------------- Senado: votos, presença e cota
+
+AUSENCIAS_SENADO = {"NCom": "não compareceu", "AP": "atividade parlamentar", "LS": "licença saúde",
+                    "LP": "licença particular", "MIS": "missão", "REP": "representação", "LAP": "licença",
+                    "LC": "licença", "LG": "licença gestante", "AUS": "ausente"}
+
+
+def coletar_senado_atividade() -> dict:
+    """Votações nominais, presença e cota (CEAPS) dos senadores do AM, desde 2023."""
+    senadores = (ler("fontes/senado.json") or {}).get("politicos", [])
+    hoje = date.today()
+    resumo, notas = {}, []
+    for p in senadores:
+        cod = int(p["id"].split("-")[1])
+        votos, sessoes = [], defaultdict(lambda: {"presente": False, "data": ""})
+        for ano in range(2023, hoje.year + 1):
+            for ini, fim in ((f"{ano}-01-01", f"{ano}-06-30"), (f"{ano}-07-01", f"{ano}-12-31")):
+                if ini > hoje.isoformat():
+                    continue
+                try:
+                    lista = jget(f"{SENADO}/votacao?codigoParlamentar={cod}&dataInicio={ini}&dataFim={fim}", timeout=180)
+                except Exception as e:  # noqa: BLE001
+                    log(f"[senado_atividade] {p['nome']} {ini}: {e}")
+                    continue
+                for v in lista:
+                    meu = next((x for x in v.get("votos", []) if x.get("codigoParlamentar") == cod), None)
+                    if not meu:
+                        continue
+                    sigla = meu.get("siglaVotoParlamentar") or ""
+                    s = sessoes[v["codigoSessao"]]
+                    s["data"] = v.get("dataSessao") or ""
+                    if sigla not in AUSENCIAS_SENADO:
+                        s["presente"] = True
+                    else:
+                        s.setdefault("motivo", sigla)
+                    votos.append({"id": v.get("codigoSessaoVotacao"), "data": v.get("dataSessao"), "voto": sigla,
+                                  "descricao": re.sub(r"\s+", " ", v.get("descricaoVotacao") or "")[:220],
+                                  "proposicao": v.get("identificacao"), "aprovada": (v.get("resultadoVotacao") or "").upper().startswith("A")})
+        pres = {}
+        for s in sessoes.values():
+            a = pres.setdefault(s["data"][:4], {"presente": 0, "sessoes": 0})
+            a["sessoes"] += 1
+            a["presente"] += s["presente"]
+        ausencias = Counter(AUSENCIAS_SENADO[s["motivo"]] for s in sessoes.values() if not s["presente"] and s.get("motivo"))
+        votos.sort(key=lambda x: x["data"] or "", reverse=True)
+        resumo[p["id"]] = {
+            "presenca": pres,
+            "ausencias": dict(ausencias.most_common()),
+            "votos": {"total": len(votos), "sim": sum(v["voto"] == "Sim" for v in votos), "nao": sum(v["voto"] == "Não" for v in votos),
+                      "com_orientacao": 0, "seguiu_partido": 0, "recentes": [v for v in votos if v["voto"] in ("Sim", "Não", "Abstenção")][:40]},
+        }
+        log(f"[senado_atividade] {p['nome']}: {len(votos)} votos, {len(sessoes)} sessões")
+
+    por_codigo = {p["id"].split("-", 1)[1]: p for p in senadores}
+    for ano in range(2023, hoje.year + 1):
+        try:
+            linhas = json.loads(baixar(f"https://adm.senado.gov.br/adm-dadosabertos/api/v1/senadores/despesas_ceaps/{ano}", timeout=300))
+        except Exception as e:  # noqa: BLE001
+            log(f"[senado_atividade] CEAPS {ano}: {e}")
+            continue
+        for r in linhas:
+            p = por_codigo.get(str(r.get("codSenador")))
+            if not p:
+                continue
+            notas.append({
+                "casa": "senado", "politico": p["id"], "politico_nome": p["nome"], "ano": ano, "mes": int(r.get("mes") or 0),
+                "data": (r.get("data") or "")[:10],
+                "categoria": categoria_cota(r.get("tipoDespesa") or ""), "fornecedor": (r.get("fornecedor") or "").strip(),
+                "cnpj": (lambda d: d if len(d) == 14 else None)(re.sub(r"\D", "", r.get("cpfCnpj") or "")),
+                "valor": float(r.get("valorReembolsado") or 0), "documento": r.get("documento") or None,
+            })
+    for pid in resumo:
+        minhas = [n for n in notas if n["politico"] == pid]
+        resumo[pid]["cota"] = {str(a): resumo_cota([n for n in minhas if n["ano"] == a]) for a in sorted({n["ano"] for n in minhas})}
+    log(f"[senado_atividade] {len(notas)} notas da CEAPS")
+    return {"atividade": resumo, "notas": notas}
+
+
+# ------------------------------------------------- Histórico eleitoral (TSE)
+
+ANOS_TSE = list(range(2000, date.today().year + 1, 2))
+
+
+def chave_pessoa(nome: str, nascimento: str) -> str:
+    import hashlib
+    return "tse-" + hashlib.sha1(f"{sem_acento(nome).upper().strip()}|{nascimento}".encode()).hexdigest()[:10]
+
+
+def slug(s: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", sem_acento(s)).strip("-")
+
+
+def ler_cache_csv(nome: str):
+    caminho = CACHE / nome
+    if not caminho.exists():
+        return []
+    with caminho.open(encoding="latin-1", newline="") as f:
+        return list(csv.DictReader(f, delimiter=";"))
+
+
+def coletar_tse_historico() -> dict:
+    """Todas as candidaturas do Amazonas de 2000 em diante: pessoas, histórico, fotos e câmaras por eleição.
+
+    Lê os arquivos do TSE em .cache (consulta_cand, bem_candidato, votacao_candidato_munzona e as fotos
+    em .cache/fotos/ANO). Rode à mão: python scripts/coletar.py tse_historico"""
+    from PIL import Image
+
+    pessoas, municipios = {}, defaultdict(lambda: {"nome": "", "eleicoes": {}})
+    fotos_dir = DADOS / "fotos"
+    fotos_dir.mkdir(parents=True, exist_ok=True)
+    for ano in ANOS_TSE:
+        cand = ler_cache_csv(f"consulta_cand_{ano}_AM.csv")
+        if not cand:
+            continue
+        # O TSE usou grafias antigas de dois municípios em algumas eleições
+        for x in cand:
+            x["NM_UE"] = {"BOA VISTA DE RAMOS": "BOA VISTA DO RAMOS", "NOVO AYRAO": "NOVO AIRÃO"}.get(x["NM_UE"], x["NM_UE"])
+        bens = Counter()
+        for b in ler_cache_csv(f"bem_candidato_{ano}_AM.csv"):
+            bens[b["SQ_CANDIDATO"]] += float((b.get("VR_BEM_CANDIDATO") or "0").replace(",", ".") or 0)
+        votos = Counter()
+        for v in ler_cache_csv(f"votacao_candidato_munzona_{ano}_AM.csv"):
+            votos[(v["SQ_CANDIDATO"], v["NR_TURNO"])] += int(v.get("QT_VOTOS_NOMINAIS") or 0)
+        fotos = {}
+        pasta = CACHE / "fotos" / str(ano)
+        if pasta.exists():
+            for f in pasta.iterdir():
+                m = re.match(r"F?AM(\d+)_div\.", f.name, re.I)
+                if m:
+                    fotos[m.group(1)] = f
+        # Uma linha por candidato (a do último turno disputado)
+        por_sq = {}
+        for x in cand:
+            if x["SQ_CANDIDATO"] not in por_sq or x.get("NR_TURNO", "1") > por_sq[x["SQ_CANDIDATO"]].get("NR_TURNO", "1"):
+                por_sq[x["SQ_CANDIDATO"]] = x
+        for sq, x in por_sq.items():
+            nasc = x.get("DT_NASCIMENTO") or ""
+            if nasc.startswith("#"):
+                nasc = ""
+            pid = chave_pessoa(x["NM_CANDIDATO"], nasc)
+            v1, v2 = votos.get((sq, "1")), votos.get((sq, "2"))
+            situacao = (x.get("DS_SIT_TOT_TURNO") or "").replace("#NULO#", "").strip()
+            municipal = x["DS_CARGO"] in ("PREFEITO", "VICE-PREFEITO", "VEREADOR")
+            c = {"ano": ano, "cargo": titulo(x["DS_CARGO"]), "ue": titulo(x["NM_UE"]) if municipal else "Amazonas",
+                 "partido": x.get("SG_PARTIDO"), "numero": x.get("NR_CANDIDATO"), "urna": titulo(x.get("NM_URNA_CANDIDATO") or ""),
+                 "situacao": titulo(situacao) or titulo(x.get("DS_SITUACAO_CANDIDATURA") or ""),
+                 "eleito": situacao.startswith("ELEITO"), "votos": v2 or v1, "patrimonio": round(bens[sq], 2) if sq in bens else None}
+            pe = pessoas.setdefault(pid, {"id": pid, "nome": titulo(x["NM_CANDIDATO"]), "nascimento": nasc or None,
+                                          "candidaturas": [], "foto": None, "_foto_ano": 0})
+            pe["candidaturas"].append(c)
+            pe["genero"] = titulo(x.get("DS_GENERO") or "") or pe.get("genero")
+            pe["instrucao"] = titulo(x.get("DS_GRAU_INSTRUCAO") or "") or pe.get("instrucao")
+            pe["ocupacao"] = titulo(x.get("DS_OCUPACAO") or "") or pe.get("ocupacao")
+            if sq in fotos and ano >= pe["_foto_ano"]:
+                pe["_foto"], pe["_foto_ano"] = fotos[sq], ano
+            if municipal:
+                m = municipios[slug(x["NM_UE"])]
+                m["nome"] = titulo(x["NM_UE"])
+                e = m["eleicoes"].setdefault(str(ano), {"prefeito": [], "vice": [], "vereadores": [], "candidatos": 0})
+                e["candidatos"] += 1
+                if c["eleito"]:
+                    alvo = {"PREFEITO": "prefeito", "VICE-PREFEITO": "vice"}.get(x["DS_CARGO"], "vereadores")
+                    e[alvo].append({"pessoa": pid, "nome": c["urna"] or pe["nome"], "partido": c["partido"], "votos": c["votos"]})
+        log(f"[tse_historico] {ano}: {len(por_sq)} candidaturas, {len(fotos)} fotos")
+
+    # Fotos: a mais recente de cada pessoa, reduzida para 96 x 120 em WebP
+    feitas = 0
+    for pe in pessoas.values():
+        origem = pe.pop("_foto", None)
+        pe.pop("_foto_ano", None)
+        if not origem:
+            continue
+        destino = fotos_dir / f"{pe['id']}.webp"
+        if not destino.exists():
+            try:
+                with Image.open(origem) as im:
+                    im = im.convert("RGB")
+                    im.thumbnail((96, 120))
+                    im.save(destino, "WEBP", quality=62, method=6)
+                feitas += 1
+            except Exception as e:  # noqa: BLE001
+                log(f"[tse_historico] foto {origem.name}: {e}")
+                continue
+        pe["foto"] = f"data/fotos/{pe['id']}.webp"
+    log(f"[tse_historico] {len(pessoas)} pessoas, {feitas} fotos novas")
+
+    # Arquivos: índice compacto para a busca e detalhes divididos em 256 partes
+    indice = []
+    partes = defaultdict(dict)
+    for pe in pessoas.values():
+        pe["candidaturas"].sort(key=lambda c: c["ano"])
+        u = pe["candidaturas"][-1]
+        eleicoes_ganhas = sum(c["eleito"] for c in pe["candidaturas"])
+        indice.append([pe["id"], u["urna"] or pe["nome"], pe["nome"], u["cargo"], u["ano"], u["ue"], u["partido"], eleicoes_ganhas,
+                       1 if pe["foto"] else 0, len(pe["candidaturas"])])
+        partes[pe["id"][4:6]][pe["id"]] = pe
+    pasta = DADOS / "pessoas"
+    pasta.mkdir(exist_ok=True)
+    for k, v in partes.items():
+        (pasta / f"{k}.json").write_text(json.dumps(v, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+    indice.sort(key=lambda r: (-r[4], r[1]))
+    (pasta / "indice.json").write_text(json.dumps(indice, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+    for m in municipios.values():
+        for e in m["eleicoes"].values():
+            e["vereadores"].sort(key=lambda v: -(v["votos"] or 0))
+    salvar("municipios.json", dict(sorted(municipios.items())))
+    return {"pessoas": len(pessoas), "municipios": len(municipios)}
+
+
+def ligar_pessoas(politicos: list[dict]) -> None:
+    """Liga cada político em exercício à sua pessoa no histórico do TSE (nome civil + nascimento, ou nome de urna)."""
+    pasta = DADOS / "pessoas"
+    if not (pasta / "indice.json").exists():
+        return
+    indice = json.loads((pasta / "indice.json").read_text(encoding="utf-8"))
+    por_civil, por_urna = defaultdict(list), defaultdict(list)
+    for r in indice:
+        por_civil[sem_acento(r[2])].append(r)
+        por_urna[sem_acento(r[1])].append(r)
+    cache_partes = {}
+    for p in politicos:
+        el = p.get("eleicao") or {}
+        candidatos = por_civil.get(sem_acento(p.get("nome_completo") or ""), []) or por_urna.get(sem_acento(p["nome"]), [])
+        if len(candidatos) > 1 and el.get("nascimento"):
+            filtro = []
+            for r in candidatos:
+                parte = cache_partes.setdefault(r[0][4:6], json.loads((pasta / f"{r[0][4:6]}.json").read_text(encoding="utf-8")))
+                if parte[r[0]].get("nascimento") == el["nascimento"]:
+                    filtro.append(r)
+            candidatos = filtro or candidatos
+        if len(candidatos) == 1 or (candidatos and p.get("municipio")):
+            r = candidatos[0]
+            if p.get("municipio"):
+                r = next((c for c in candidatos if sem_acento(c[5]) == sem_acento(p["municipio"])), candidatos[0])
+            p["pessoa"] = r[0]
+            if not p.get("foto") and r[8]:
+                p["foto"] = f"data/fotos/{r[0]}.webp"
+
+
+# ------------------------------------------------------------- Tribunais
+
+TRIBUNAIS = {
+    "tjam": "Tribunal de Justiça do Amazonas",
+    "mpam": "Ministério Público do Amazonas",
+    "trt11": "Tribunal Regional do Trabalho da 11ª Região",
+    "tream": "Tribunal Regional Eleitoral do Amazonas",
+}
+
+
+def coletar_tribunais() -> dict:
+    """Membros e remuneração mensal (últimos 12 meses publicados) de TJAM, MPAM, TRT11 e TRE-AM, pelo DadosJusBr."""
+    hoje = date.today()
+    saida = {}
+    for org, nome in TRIBUNAIS.items():
+        membros, meses = {}, []
+        a, m = hoje.year, hoje.month
+        tentativas = 0
+        while len(meses) < 12 and tentativas < 20:
+            tentativas += 1
+            m -= 1
+            if m == 0:
+                a, m = a - 1, 12
+            try:
+                info = jget(f"https://api.dadosjusbr.org/v2/dados/{org}/{a}/{m}", timeout=60)
+                url = (info.get("pacote_de_dados") or {}).get("url")
+                if not url:
+                    continue
+                z = zipfile.ZipFile(io.BytesIO(baixar(url, timeout=180)))
+            except Exception:  # noqa: BLE001
+                continue
+            meses.append(f"{a}-{m:02d}")
+            cc = list(csv.DictReader(io.StringIO(z.read("contracheque.csv").decode("utf-8")), delimiter=";"))
+            rub = defaultdict(Counter)
+            for r in csv.DictReader(io.StringIO(z.read("remuneracao.csv").decode("utf-8")), delimiter=";"):
+                if r.get("tipo") != "D":
+                    rub[r["id_contracheque"]][r["item"].strip()] += valor(r["valor"])
+            for r in cc:
+                chave = sem_acento(r["nome"]).upper()
+                x = membros.setdefault(chave, {"nome": titulo(r["nome"]), "cargo": titulo(r.get("funcao") or ""), "lotacao": titulo(r.get("local_trabalho") or ""),
+                                               "meses": 0, "bruto": 0.0, "liquido": 0.0, "diarias": 0.0, "maior_mes": 0.0, "maior_mes_ref": None,
+                                               "rubricas": Counter()})
+                bruto = valor(r.get("salario")) + valor(r.get("beneficios"))
+                x["meses"] += 1
+                x["bruto"] += bruto
+                x["liquido"] += valor(r.get("remuneracao"))
+                if bruto > x["maior_mes"]:
+                    x["maior_mes"], x["maior_mes_ref"] = bruto, f"{a}-{m:02d}"
+                for item, v in rub[r["id_contracheque"]].items():
+                    x["rubricas"][item] += v
+                    if "diaria" in sem_acento(item):
+                        x["diarias"] += v
+        lista = []
+        for x in membros.values():
+            x["rubricas"] = {k: round(v, 2) for k, v in x["rubricas"].most_common(6)}
+            for k in ("bruto", "liquido", "diarias", "maior_mes"):
+                x[k] = round(x[k], 2)
+            x["media_bruta"] = round(x["bruto"] / x["meses"], 2) if x["meses"] else None
+            lista.append(x)
+        lista.sort(key=lambda x: -x["bruto"])
+        saida[org] = {"nome": nome, "meses": sorted(meses), "membros": lista,
+                      "fonte": f"https://dadosjusbr.org/orgao/{org}"}
+        log(f"[tribunais] {org}: {len(lista)} membros, {len(meses)} meses")
+    saida["tceam"] = {
+        "nome": "Tribunal de Contas do Estado do Amazonas", "meses": [], "fonte": "https://transparencia-new.tceam.tc.br/contracheque_membros",
+        "nota": "O TCE-AM publica os contracheques de membros só em arquivos mensais, sem dados abertos; os valores não entram aqui.",
+        "membros": [{"nome": n, "cargo": cg, "lotacao": "", "meses": 0} for cg, nomes in (
+            ("Conselheiro", ["Ari Jorge Moutinho da Costa Júnior", "Érico Xavier Desterro e Silva", "Josué Cláudio de Souza Neto",
+                             "Júlio Assis Corrêa Pinheiro", "Mario Manoel Coelho de Mello", "Yara Amazônia Lins Rodrigues", "Luis Fabian Pereira Barbosa"]),
+            ("Conselheiro substituto", ["Mário José de Moraes Costa Filho", "Alípio Reis Firmo Filho", "Luiz Henrique Pereira Mendes",
+                                        "Alber Furtado de Oliveira Júnior"])) for n in nomes],
+    }
+    return {"tribunais": saida}
+
+
 # ------------------------------------------------------------------ main
 
 FONTES_INFO = {
@@ -1163,10 +1552,14 @@ FONTES_INFO = {
     "camara_atividade": ("Câmara dos Deputados — Cota, presença e votações", "https://dadosabertos.camara.leg.br/swagger/api.html#staticfile"),
     "eleicoes": ("TSE — Votos e bens declarados", "https://dadosabertos.tse.jus.br"),
     "ceap_aleam": ("Assembleia Legislativa do Amazonas — Cota parlamentar (CEAP)", "https://www.aleam.gov.br/transparencia/controle-de-cota-parlamentar/"),
+    "presenca": ("Câmara Municipal de Manaus e ALEAM — Presença em sessões (SAPL)", "https://sapl.al.am.leg.br/sessao/pesquisar-sessao"),
+    "senado_atividade": ("Senado Federal — Votações nominais e cota (CEAPS)", "https://adm.senado.gov.br/adm-dadosabertos"),
+    "tse_historico": ("TSE — Candidaturas, bens, votos e fotos do Amazonas desde 2000", "https://dadosabertos.tse.jus.br"),
+    "tribunais": ("DadosJusBr — Remuneração de membros do sistema de Justiça", "https://dadosjusbr.org"),
     "diarios": ("Diários oficiais: ALEAM, Câmara Municipal de Manaus e Estado do Amazonas", "https://diario.imprensaoficial.am.gov.br"),
 }
 # Fontes pesadas que só rodam quando pedidas pelo nome
-SOB_DEMANDA = {"eleicoes"}
+SOB_DEMANDA = {"eleicoes", "tse_historico"}
 
 
 def main() -> int:
@@ -1181,6 +1574,10 @@ def main() -> int:
         "camara_atividade": coletar_camara_atividade,  # depende de camara
         "ceap_aleam": coletar_ceap_aleam,  # depende de aleam
         "diarios": coletar_diarios,  # depende das casas
+        "presenca": coletar_presenca,
+        "senado_atividade": coletar_senado_atividade,  # depende de senado
+        "tribunais": coletar_tribunais,
+        "tse_historico": coletar_tse_historico,  # sob demanda, lê os arquivos do TSE em .cache
         "eleicoes": coletar_eleicoes,  # sob demanda
     }
     meta_ant = ler("meta.json", {}) or {}
@@ -1218,6 +1615,8 @@ def main() -> int:
     atividade = ler("fontes/camara_atividade.json") or {}
     eleicoes = (ler("fontes/eleicoes.json") or {}).get("eleicoes", {})
     ceap_aleam = ler("fontes/ceap_aleam.json") or {}
+    presenca = (ler("fontes/presenca.json") or {}).get("presenca", {})
+    senado_at = ler("fontes/senado_atividade.json") or {}
     diarios = ler("fontes/diarios.json") or {}
     por_politico = defaultdict(list)
     for m in diarios.get("mencoes", []):
@@ -1234,6 +1633,13 @@ def main() -> int:
             p["votacoes"] = a["votos"]
         if p["id"] in eleicoes:
             p["eleicao"] = eleicoes[p["id"]]
+        if p["id"] in presenca:
+            p["presenca"] = presenca[p["id"]]
+        if p["id"] in senado_at.get("atividade", {}):
+            a = senado_at["atividade"][p["id"]]
+            p["presenca"], p["votacoes"], p["ausencias"] = a["presenca"], a["votos"], a["ausencias"]
+            if a.get("cota"):
+                p["cota"] = a["cota"]
         if p["id"] in ceap_aleam.get("cota", {}) and "cota" not in p:
             p["cota"] = ceap_aleam["cota"][p["id"]]
         if por_politico.get(p["id"]):
@@ -1242,8 +1648,12 @@ def main() -> int:
                            "recentes": [{k: m[k] for k in ("diario", "edicao", "data", "url", "tipo", "trecho")} for m in ms[:8]]}
     # Notas fiscais da cota, das duas casas, num arquivo próprio (só a página de gastos carrega)
     salvar("diario.json", {"edicoes": diarios.get("edicoes", []), "mencoes": diarios.get("mencoes", [])})
-    salvar("gastos.json", sorted(ceap_cmm.get("notas", []) + atividade.get("notas", []) + ceap_aleam.get("notas", []),
-                                 key=lambda n: n.get("data") or "", reverse=True))
+    notas = ceap_cmm.get("notas", []) + atividade.get("notas", []) + ceap_aleam.get("notas", []) + senado_at.get("notas", [])
+    ligar_pessoas(politicos)
+    if ler("fontes/tribunais.json"):
+        salvar("tribunais.json", ler("fontes/tribunais.json")["tribunais"])
+    nomear_fornecedores(notas, politicos)
+    salvar("gastos.json", sorted(notas, key=lambda n: n.get("data") or "", reverse=True))
     normas.sort(key=lambda n: n.get("data") or "", reverse=True)
     executivo = json.loads((DADOS / "executivo-manual.json").read_text(encoding="utf-8"))
     salvar("politicos.json", politicos)

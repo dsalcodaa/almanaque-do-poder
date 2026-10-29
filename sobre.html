@@ -15,6 +15,8 @@
   <meta property="og:title" content="Sobre o projeto · Almanaque do Poder">
   <meta property="og:locale" content="pt_BR">
   <link rel="author" href="humans.txt">
+  <link rel="icon" type="image/png" href="assets/img/favicon.png">
+  <meta property="og:image" content="assets/img/logo-almanaque.jpg">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Source+Serif+4:opsz,wght@8..60,600;8..60,700&display=swap">
@@ -25,15 +27,17 @@
 
   <div class="wrap">
     <header class="masthead">
-      <a class="masthead__brand" href="index.html">Almanaque do Poder</a>
+      <a class="masthead__brand" href="index.html"><img class="masthead__logo" src="assets/img/logo-icone.png" alt="" width="40" height="40"><span>Almanaque do Poder</span></a>
       <nav class="masthead__nav" aria-label="Principal">
         <a href="index.html">Início</a>
         <a href="politicos.html">Políticos</a>
+        <a href="municipio.html">Municípios</a>
         <a href="leis.html">Leis e projetos</a>
         <a href="rankings.html">Rankings</a>
         <a href="gastos.html">Gastos</a>
         <a href="comparar.html">Comparar</a>
         <a href="diario.html">Diário Oficial</a>
+        <a href="tribunais.html">Tribunais</a>
         <a href="sobre.html" aria-current="page">Sobre o projeto</a>
       </nav>
     </header>
@@ -74,6 +78,10 @@
           <p>Presença conta as sessões deliberativas encerradas do Plenário da Câmara dos Deputados; licenças e faltas justificadas contam como ausência. Nas votações nominais, o deputado "votou com o partido" quando seu voto foi igual ao da maioria dos colegas de partido, sem contar o próprio voto. A orientação oficial não é usada porque a Câmara a publica por bloco, com nome abreviado.</p>
           <p>O Diário Oficial é lido todo dia: as edições dos últimos 60 dias dos diários da Assembleia Legislativa, da Câmara Municipal de Manaus e do Estado do Amazonas. O texto de cada PDF é extraído e o site guarda, por 12 meses, os trechos que citam cada político. Ficam de fora listas de nomes (expediente, composição da Mesa, chamadas) e assinaturas de ofício, como a do presidente da Casa em todo ato administrativo. O tipo de ato é deduzido do texto e pode errar; o link da edição permite conferir. O governador e o vice não são buscados no Diário do Estado, porque assinam quase todos os atos. O Diário Oficial do Município de Manaus ainda não está incluído.</p>
           <p>Votos e patrimônio declarado vêm dos arquivos do TSE da eleição mais recente que cada político disputou, ligados pelo nome, cargo e município.</p>
+          <p>Faltas: na Câmara Municipal de Manaus e na Assembleia Legislativa, o site conta as sessões ordinárias e extraordinárias desde 2023 registradas no SAPL, dentro do período de mandato de cada parlamentar. No Senado, conta as sessões com votação nominal: o senador está presente quando votou ou registrou presença, e o motivo da ausência (licença, missão oficial, não compareceu) vem do próprio registro. Os votos dos senadores e a cota (CEAPS) vêm dos dados abertos do Senado.</p>
+          <p>A aba "Todos desde 2000" reúne cada pessoa que disputou eleição no Amazonas, a partir dos arquivos de candidaturas, bens, votação e fotos do TSE. A mesma pessoa é reconhecida entre eleições pelo nome civil e pela data de nascimento. A foto usada é a mais recente publicada pelo TSE. A página de cada município mostra os eleitos de cada eleição municipal desde 2000.</p>
+          <p>Fornecedores com nome oculto na fonte são identificados pelo CNPJ na base pública da Receita Federal, consultada pela BrasilAPI. Pessoas físicas (CPF) continuam sem nome.</p>
+          <p>Remuneração de membros do TJAM, MPAM, TRT da 11ª Região e TRE-AM vem do DadosJusBr, que reúne os contracheques publicados por cada órgão. Patrimônio e votos de magistrados não são publicados em dados abertos.</p>
           <p>Prefeitos vêm do resultado oficial do TSE de 2024. Mudanças posteriores, como renúncias e sucessões, são ajustadas manualmente, sempre com fonte citada.</p>
         </div>
         <ul class="ledger" id="fontes" style="margin-top: var(--space-3);"></ul>

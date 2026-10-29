@@ -14,6 +14,8 @@
   <meta property="og:title" content="Políticos · Almanaque do Poder">
   <meta property="og:locale" content="pt_BR">
   <link rel="author" href="humans.txt">
+  <link rel="icon" type="image/png" href="assets/img/favicon.png">
+  <meta property="og:image" content="assets/img/logo-almanaque.jpg">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Source+Serif+4:opsz,wght@8..60,600;8..60,700&display=swap">
@@ -24,15 +26,17 @@
 
   <div class="wrap">
     <header class="masthead">
-      <a class="masthead__brand" href="index.html">Almanaque do Poder</a>
+      <a class="masthead__brand" href="index.html"><img class="masthead__logo" src="assets/img/logo-icone.png" alt="" width="40" height="40"><span>Almanaque do Poder</span></a>
       <nav class="masthead__nav" aria-label="Principal">
         <a href="index.html">Início</a>
         <a href="politicos.html" aria-current="page">Políticos</a>
+        <a href="municipio.html">Municípios</a>
         <a href="leis.html">Leis e projetos</a>
         <a href="rankings.html">Rankings</a>
         <a href="gastos.html">Gastos</a>
         <a href="comparar.html">Comparar</a>
         <a href="diario.html">Diário Oficial</a>
+        <a href="tribunais.html">Tribunais</a>
         <a href="sobre.html">Sobre o projeto</a>
       </nav>
     </header>
@@ -41,8 +45,13 @@
       <section class="hero">
         <p class="kicker">Quem está no poder</p>
         <h1 class="display">Políticos</h1>
-        <p class="lede">Do Senado às prefeituras: quem exerce mandato no Amazonas hoje.</p>
+        <p class="lede">Do Senado às prefeituras: quem exerce mandato no Amazonas hoje e todos que já disputaram eleição no estado.</p>
       </section>
+      <ul class="rk-abas" id="abas-politicos" aria-label="Listas de políticos">
+        <li><button type="button" data-aba="atuais">Em exercício</button></li>
+        <li><button type="button" data-aba="todos">Todos desde 2000</button></li>
+      </ul>
+      <div id="painel-atuais">
       <form class="filtros" role="search" onsubmit="return false">
         <label><span>Casa ou cargo</span><select id="f-casa"><option value="">Todos</option></select></label>
         <label><span>Partido</span><select id="f-partido"><option value="">Todos</option></select></label>
@@ -50,6 +59,20 @@
       </form>
       <p class="total" id="total" aria-live="polite"></p>
       <ul class="cards" id="lista"><li class="muted">Carregando…</li></ul>
+      </div>
+      <div id="painel-todos" hidden>
+        <p class="muted" style="margin-top: var(--space-3);">Todas as pessoas que disputaram eleição no Amazonas desde 2000, eleitas ou não, com a foto mais recente registrada no TSE.</p>
+        <form class="filtros" role="search" onsubmit="return false">
+          <label><span>Último cargo disputado</span><select id="t-cargo"><option value="">Todos</option></select></label>
+          <label><span>Município</span><select id="t-mun"><option value="">Todos</option></select></label>
+          <label><span>Ano</span><select id="t-ano"><option value="">Todos</option></select></label>
+          <label><span>Resultado</span><select id="t-sit"><option value="">Todos</option><option value="eleito">Já foi eleito(a)</option><option value="nunca">Nunca eleito(a)</option></select></label>
+          <label><span>Buscar</span><input id="t-busca" type="search" placeholder="Nome de urna ou nome civil" autocomplete="off"></label>
+        </form>
+        <p class="total" id="total-todos" aria-live="polite"></p>
+        <ul class="cards" id="lista-todos"></ul>
+        <p><button class="button button--ghost" type="button" id="mais-todos" hidden>Mostrar mais</button></p>
+      </div>
     </main>
 
     <footer class="site-footer">

@@ -53,6 +53,11 @@ python -m http.server 8000
 | Diário Oficial | Diários da ALEAM, da Câmara Municipal de Manaus e do Estado (DOE-AM) |
 | Cota, presença e votos dos deputados federais | Arquivos de dados abertos da Câmara dos Deputados |
 | Votos e patrimônio | TSE: `votacao_candidato_munzona` e `bem_candidato` |
+| Presença na CMM e na ALEAM | SAPL, sessões plenárias e presença |
+| Votos, presença e cota dos senadores | Dados abertos do Senado (votações nominais e CEAPS) |
+| Histórico de todos os candidatos e municípios | TSE, candidaturas, bens, votação e fotos desde 2000 (`tse_historico`) |
+| Nome de fornecedores ocultos | BrasilAPI (base de CNPJ da Receita), cache em `data/fontes/cnpj.json` |
+| Tribunais e Ministério Público | DadosJusBr (TJAM, MPAM, TRT-11, TRE-AM); lista do TCE-AM no código |
 
 Para atualizar os dados localmente:
 
@@ -60,13 +65,14 @@ Para atualizar os dados localmente:
 python scripts/coletar.py            # todas as fontes (cerca de 12 minutos)
 python scripts/coletar.py cmm aleam  # só as fontes indicadas
 python scripts/coletar.py eleicoes   # votos e patrimônio (TSE, arquivos grandes; não roda no Actions)
+python scripts/coletar.py tse_historico  # histórico, fotos e municípios (TSE desde 2000; não roda no Actions)
 ```
 
 O GitHub Actions roda o coletor todo dia às 6h (horário de Manaus), salva os dados no repositório e publica o site.
 
 A leitura dos diários usa o `pdftotext` (pacote `poppler-utils` no Linux). Sem ele, o coletor tenta o `pypdf`; sem nenhum dos dois, pula os diários e mantém os dados anteriores.
 
-Ainda não integrado: Diário Oficial do Município de Manaus (o servidor não respondeu nos testes).
+Ainda não integrado: Diário Oficial do Município de Manaus (o servidor não respondeu nos testes) e as emendas do Portal da Transparência de Manaus (sem API; o portal só oferece consultas em telas).
 
 ## Identidade visual
 
