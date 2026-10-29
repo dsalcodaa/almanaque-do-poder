@@ -326,6 +326,13 @@
         h += '<p><a href="gastos.html?politico=' + encodeURIComponent(p.id) + '">Ver cada nota fiscal</a></p></section>';
       }
 
+      if (p.diario && p.diario.total) {
+        h += '<section class="section"><p class="kicker">Diário Oficial</p><h2 class="h2">Citações recentes</h2>' +
+          '<p class="muted">' + num(p.diario.total) + (p.diario.total === 1 ? " citação" : " citações") + " nos diários oficiais da ALEAM, da Câmara Municipal de Manaus e do Estado nos últimos 12 meses.</p>" +
+          '<ul class="ledger diario">' + p.diario.recentes.map(function (m) { return itemDiario(m, false); }).join("") + "</ul>" +
+          '<p><a href="diario.html?politico=' + encodeURIComponent(p.id) + '">Ver todas as citações</a></p></section>';
+      }
+
       var em = p.emendas;
       if (em) {
         h += '<section class="section"><p class="kicker">Emendas parlamentares</p><h2 class="h2">Dinheiro indicado ao orçamento</h2>' +
@@ -440,7 +447,7 @@
         { titulo: "Menor parcela de homenagens", kicker: "Proporção", inverso: true, val: function (p) { return p.metricas.normas >= 3 ? pctHomenagem(p) : null; }, fmt: function (v) { return Math.round(v * 100) + "%"; }, nota: "Entre quem aprovou pelo menos 3 normas." },
         { titulo: "Maior presença em sessões", kicker: "Presença", val: function (p) { var x = somaPresenca(p.presenca); return x.sessoes ? x.presente / x.sessoes : null; }, fmt: function (v) { return Math.round(v * 100) + "%"; }, nota: "Deputados federais, sessões deliberativas do Plenário desde 2023." },
         { titulo: "Mais fiéis ao partido", kicker: "Votações", val: function (p) { return p.votacoes && p.votacoes.com_orientacao ? p.votacoes.seguiu_partido / p.votacoes.com_orientacao : null; }, fmt: function (v) { return Math.round(v * 100) + "%"; }, nota: "Votou igual à maioria do próprio partido. Deputados federais, desde 2023." },
-        { titulo: "Maior gasto de cota parlamentar", kicker: "Gabinete", accent: true, val: function (p) { var a = ultimoAno(p.cota); return a ? p.cota[a].total : null; }, fmt: reais, nota: "No ano mais recente com dados. Vereadores de Manaus e deputados federais." },
+        { titulo: "Maior gasto de cota parlamentar", kicker: "Gabinete", accent: true, val: function (p) { var a = ultimoAno(p.cota); return a ? p.cota[a].total : null; }, fmt: reais, nota: "No ano mais recente com dados. Vereadores de Manaus, deputados estaduais e federais." },
         { titulo: "Maior patrimônio declarado", kicker: "Patrimônio", val: function (p) { return p.eleicao ? p.eleicao.patrimonio : null; }, fmt: reais, nota: "Bens declarados ao TSE na eleição mais recente." },
         { titulo: "Mais votados", kicker: "Eleição", val: function (p) { return p.eleicao ? p.eleicao.votos : null; }, fmt: num, nota: "Votos nominais na eleição mais recente que disputou." },
         { titulo: "Mais emendas pagas", kicker: "Orçamento", val: function (p) { return p.emendas ? p.emendas.pago : null; }, fmt: reais, nota: "Deputados federais e senadores, desde 2023. Fonte: Portal da Transparência." },
@@ -549,7 +556,7 @@
             return "<tr><td>" + esc(dataBR(n.data)) + "</td><td>" + esc(n.politico_nome) + "</td><td>" + esc(n.categoria) + "</td><td>" + esc(n.fornecedor) + (n.cnpj ? '<span class="ledger__sub">' + esc(cnpjFmt(n.cnpj)) + "</span>" : "") + '</td><td class="num">' + reais(n.valor) + "</td></tr>";
           }).join("") + "</tbody></table></div>" +
           (f.length > limite ? '<p><button class="button button--ghost" type="button" id="mais">Mostrar mais notas</button></p>' : "") +
-          '<p class="muted">Fontes: Câmara Municipal de Manaus (SIGAE) e Câmara dos Deputados (cota parlamentar). As notas entram com até 3 meses de atraso.</p></section>';
+          '<p class="muted">Fontes: Câmara Municipal de Manaus (SIGAE), Assembleia Legislativa do Amazonas (controle de cota parlamentar) e Câmara dos Deputados (cota parlamentar). As notas entram com até 3 meses de atraso.</p></section>';
         alvo.innerHTML = h;
 
         var bMais = $("#mais");
@@ -619,6 +626,65 @@
     }).catch(function (e) { erro(alvo, e); });
   }
 
+  // ---------- diário oficial ----------
+  var DIARIOS = { aleam: "ALEAM", cmm: "CMM", doe: "DOE-AM" };
+
+  function itemDiario(m, comNome) {
+    return '<li><span class="ledger__key">' + esc(dataBR(m.data)) + "</span><span>" +
+      '<span class="tag">' + esc(m.tipo) + "</span> " +
+      (comNome ? '<a href="politico.html?id=' + encodeURIComponent(m.politico) + '"><strong>' + esc(m.politico_nome) + "</strong></a> " : "") +
+      '<span class="diario__trecho">' + esc(m.trecho) + "</span>" +
+      '<span class="ledger__sub"><a href="' + esc(m.url) + '" target="_blank" rel="noopener">' + esc(m.diario) + ", edição " + esc(m.edicao) + "</a></span></span></li>";
+  }
+
+  function paginaDiario() {
+    var alvo = $("#diario"), fFonte = $("#f-fonte"), fTipo = $("#f-tipo"), fPol = $("#f-pol"), fBusca = $("#f-busca");
+    carregar("diario.json").then(function (d) {
+      var ms = d.mencoes, tipos = {}, nomes = {};
+      ms.forEach(function (m) { tipos[m.tipo] = (tipos[m.tipo] || 0) + 1; nomes[m.politico] = m.politico_nome; });
+      Object.keys(tipos).sort().forEach(function (t) { fTipo.insertAdjacentHTML("beforeend", '<option value="' + esc(t) + '">' + esc(t) + "</option>"); });
+      Object.keys(nomes).sort(function (a, b) { return semAcento(nomes[a]).localeCompare(semAcento(nomes[b])); }).forEach(function (id) {
+        fPol.insertAdjacentHTML("beforeend", '<option value="' + esc(id) + '">' + esc(nomes[id]) + "</option>");
+      });
+      if (param("politico")) fPol.value = param("politico");
+      if (param("tipo")) fTipo.value = param("tipo");
+      var limite = 40;
+
+      function render() {
+        var fo = fFonte.value, ti = fTipo.value, po = fPol.value, q = semAcento(fBusca.value.trim());
+        var f = ms.filter(function (m) {
+          return (!fo || m.fonte === fo) && (!ti || m.tipo === ti) && (!po || m.politico === po) &&
+            (!q || semAcento(m.trecho + " " + m.politico_nome).indexOf(q) >= 0);
+        });
+        var porTipo = {};
+        f.forEach(function (m) { porTipo[m.tipo] = (porTipo[m.tipo] || 0) + 1; });
+        var ordTipo = {};
+        Object.keys(porTipo).sort(function (a, b) { return porTipo[b] - porTipo[a]; }).forEach(function (k) { ordTipo[k] = porTipo[k]; });
+        var lidas = d.edicoes.filter(function (e) { return !fo || e.fonte === fo; });
+
+        var h = '<ul class="pillars">' +
+          '<li class="pillar"><span class="pillar__index">' + num(f.length) + '</span><p class="pillar__text">citações encontradas</p></li>' +
+          '<li class="pillar"><span class="pillar__index">' + num(lidas.length) + '</span><p class="pillar__text">edições lidas nos últimos 60 dias</p></li>' +
+          '<li class="pillar"><span class="pillar__index">' + num(Object.keys(f.reduce(function (o, m) { o[m.politico] = 1; return o; }, {})).length) + '</span><p class="pillar__text">políticos citados</p></li></ul>';
+        h += '<section class="section"><p class="kicker">Tipos de ato</p><h2 class="h2">O que aparece</h2>' + barras(ordTipo, num) + "</section>";
+        h += '<section class="section"><p class="kicker">Citações</p><h2 class="h2">Mais recentes</h2>' +
+          (f.length ? '<ul class="ledger diario">' + f.slice(0, limite).map(function (m) { return itemDiario(m, true); }).join("") + "</ul>" : '<p class="muted">Nenhuma citação com esses filtros.</p>') +
+          (f.length > limite ? '<p><button class="button button--ghost no-print" type="button" id="mais">Mostrar mais</button></p>' : "") + "</section>";
+        h += '<section class="section"><p class="kicker">Edições lidas</p><h2 class="h2">Diários consultados</h2><ul class="ledger">' +
+          lidas.slice(0, 15).map(function (e) {
+            return '<li><span class="ledger__key">' + esc(dataBR(e.data)) + '</span><span><a href="' + esc(e.url) + '" target="_blank" rel="noopener">' + esc(e.nome) + ", edição " + esc(e.numero) + "</a>" +
+              '<span class="ledger__sub">' + (e.mencoes ? num(e.mencoes) + (e.mencoes === 1 ? " citação" : " citações") : "nenhuma citação") + "</span></span></li>";
+          }).join("") + "</ul></section>";
+        alvo.innerHTML = h;
+        var b = $("#mais");
+        if (b) b.addEventListener("click", function () { limite += 60; render(); });
+      }
+      [fFonte, fTipo, fPol].forEach(function (el) { el.addEventListener("change", function () { limite = 40; render(); }); });
+      fBusca.addEventListener("input", function () { limite = 40; render(); });
+      render();
+    }).catch(function (e) { erro(alvo, e); });
+  }
+
   // ---------- fontes (página sobre) ----------
   function paginaSobre() {
     var alvo = $("#fontes");
@@ -630,7 +696,7 @@
     }).catch(function () {});
   }
 
-  var paginas = { inicio: paginaInicio, politicos: paginaPoliticos, politico: paginaPolitico, leis: paginaLeis, rankings: paginaRankings, sobre: paginaSobre, gastos: paginaGastos, comparar: paginaComparar };
+  var paginas = { inicio: paginaInicio, politicos: paginaPoliticos, politico: paginaPolitico, leis: paginaLeis, rankings: paginaRankings, sobre: paginaSobre, gastos: paginaGastos, comparar: paginaComparar, diario: paginaDiario };
   var atual = document.body.getAttribute("data-page");
   if (paginas[atual]) paginas[atual]();
   atualizacao();

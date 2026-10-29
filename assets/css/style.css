@@ -357,3 +357,7 @@ a.barras__rot:hover { color: var(--accent); }
 .tabela--comparar tbody th { width: 30%; font-weight: 600; color: var(--ink-soft); }
 .tabela--comparar td { width: 35%; font-size: 1rem; }
 .comparar__cab { display: flex; align-items: center; gap: var(--space-1); text-transform: none; letter-spacing: 0; font: 700 1.05rem/1.2 var(--font-serif); color: var(--ink); text-decoration: none; }
+
+/* ---------- Diário Oficial ---------- */
+.diario .tag { margin-right: 0.35rem; }
+.diario__trecho { display: block; margin-top: 0.35rem; font-family: var(--font-serif); font-size: 0.98rem; line-height: 1.5; color: var(--ink-soft); }

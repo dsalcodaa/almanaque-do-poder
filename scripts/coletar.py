@@ -19,18 +19,23 @@ Uso:  python scripts/coletar.py              (todas as fontes)
 from __future__ import annotations
 
 import csv
+import html
 import io
 import json
 import re
+import shutil
+import subprocess
+import tempfile
 import sys
 import time
 import unicodedata
+import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
 from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 RAIZ = Path(__file__).resolve().parent.parent
@@ -576,9 +581,9 @@ def categoria_cota(texto: str) -> str:
     regras = [
         ("Combustíveis", r"combust|lubrific"),
         ("Locação de veículos", r"loca.*veic|veicul"),
-        ("Divulgação", r"divulg"),
+        ("Divulgação", r"divulg|informativ|folder|banner|outdoor|publicidade"),
         ("Consultoria e assessoria", r"consult|assess|pesquisa|trabalhos tecnicos"),
-        ("Passagens e fretamento aéreo", r"passag|aerea|aeronave|bilhete"),
+        ("Passagens e fretamento aéreo", r"passag|aere[ao]|aeronave|bilhete"),
         ("Escritório e manutenção", r"escritorio|imovel|aluguel|locacao de imovel|manutencao|material|condominio|energia|agua"),
         ("Telefonia e internet", r"telefon|internet|telecom"),
         ("Alimentação e hospedagem", r"aliment|hosped|refei"),
@@ -652,6 +657,301 @@ def coletar_ceap_cmm() -> dict:
                     resumo.setdefault(pid, {})[str(ano)] = r
     log(f"[ceap_cmm] {len(notas)} notas")
     return {"cota": resumo, "notas": notas}
+
+
+# ------------------------------------------------- Cota parlamentar da ALEAM
+
+ALEAM_CEAP = "https://www.aleam.gov.br/transparencia/controle-de-cota-parlamentar/"
+ALEAM_CSV = "https://www.aleam.gov.br/transparencia/wp-content/themes/transparencia/createCeap.php?"
+MESES = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto",
+         "Setembro", "Outubro", "Novembro", "Dezembro"]
+
+
+def aleam_csv(pid: str, ano: int, mes: int) -> str | None:
+    """CSV oficial de um gabinete num mês. A ALEAM responde 400 quando não há prestação de contas."""
+    q = urllib.parse.urlencode({"parlamentar": pid, "parlamentarJaneiro": pid, "mes": MESES[mes - 1],
+                                "ano": ano, "formato": "csv"})
+    for i in range(3):
+        try:
+            req = urllib.request.Request(ALEAM_CSV + q, headers={"User-Agent": UA})
+            with urllib.request.urlopen(req, timeout=60) as r:
+                return r.read().decode("utf-8-sig", "replace")
+        except urllib.error.HTTPError as e:
+            if e.code in (400, 404):
+                return None
+            time.sleep(3 * (i + 1))
+        except Exception:  # noqa: BLE001
+            time.sleep(3 * (i + 1))
+    raise RuntimeError(f"ALEAM não respondeu: gabinete {pid}, {mes}/{ano}")
+
+
+def coletar_ceap_aleam() -> dict:
+    """Cota parlamentar (CEAP) dos deputados estaduais, pelo CSV do Portal da Transparência da ALEAM."""
+    pagina = baixar(ALEAM_CEAP, timeout=120).decode("utf-8", "replace")
+    gabinetes = {}
+    for sel in ("dados", "dadosatual"):
+        bloco = re.search(r'<select[^>]*id="%s"[^>]*>(.*?)</select>' % sel, pagina, re.S)
+        for pid, nome in re.findall(r'<option value="(\d+)"\s*>([^<]+)</option>', bloco.group(1) if bloco else ""):
+            gabinetes[pid] = html.unescape(nome).strip()
+    if not gabinetes:
+        raise RuntimeError("lista de gabinetes da ALEAM não encontrada")
+
+    # Liga o gabinete ao político: primeiro pelo nome parlamentar, depois pelo nome civil do CSV
+    politicos = (ler("fontes/aleam.json") or {}).get("politicos", [])
+    politicos += [p for p in json.loads((DADOS / "executivo-manual.json").read_text(encoding="utf-8"))["titulares"]
+                  if p["casa"] == "governo"]
+    por_nome = {}
+    for p in politicos:
+        por_nome[sem_acento(p["nome"]).replace("’", "'")] = p["id"]
+        if p.get("nome_completo"):
+            por_nome.setdefault(sem_acento(p["nome_completo"]), p["id"])
+
+    hoje = date.today()
+    tarefas = [(pid, ano, mes) for pid in gabinetes for ano in range(2023, hoje.year + 1)
+               for mes in range(1, 13) if (ano, mes) <= (hoje.year, hoje.month)]
+    with ThreadPoolExecutor(4) as ex:
+        respostas = list(ex.map(lambda t: (t, aleam_csv(*t)), tarefas))
+
+    notas, credito = [], defaultdict(float)
+    for (pid, ano, mes), texto in respostas:
+        if not texto or "Lote;" not in texto:
+            continue
+        cab, _, corpo = texto.partition("Lote;")
+        civil = (re.search(r'Deputado\(a\);"?([^"\n]+)', cab) or [None, ""])[1].strip()
+        cred = re.search(r'"?Verba Creditada"?;([\d.,]+)', cab)
+        politico = por_nome.get(sem_acento(gabinetes[pid]).replace("’", "'")) or por_nome.get(sem_acento(civil))
+        if politico and cred:
+            credito[(politico, ano)] += valor(cred.group(1))
+        for linha in csv.reader(io.StringIO("Lote;" + corpo), delimiter=";"):
+            if len(linha) < 9 or linha[0] == "Lote" or not linha[8].strip():
+                continue
+            benef = linha[3].strip()
+            doc, _, nome = benef.partition(" - ") if re.match(r"[\d./*-]+ - ", benef) else ("", "", benef)
+            digitos = re.sub(r"\D", "", doc)
+            emissao = linha[2].strip()
+            iso = f"{emissao[6:10]}-{emissao[3:5]}-{emissao[0:2]}" if re.match(r"\d\d/\d\d/\d{4}", emissao) else ""
+            notas.append({
+                "casa": "aleam",
+                "politico": politico,
+                "politico_nome": gabinetes[pid],
+                "ano": ano,
+                "mes": mes,
+                "data": iso,
+                "categoria": categoria_cota(linha[4]),
+                "fornecedor": nome.strip(),
+                "cnpj": digitos if len(digitos) == 14 else None,
+                "valor": valor(linha[8].strip()),
+                "documento": linha[1].strip() or None,
+            })
+
+    resumo = {}
+    for pid in {n["politico"] for n in notas if n["politico"]}:
+        minhas = [n for n in notas if n["politico"] == pid]
+        for ano in sorted({n["ano"] for n in minhas}):
+            r = resumo_cota([n for n in minhas if n["ano"] == ano])
+            disp = round(credito.get((pid, ano), 0), 2)
+            r["cota_disponivel"] = disp or None
+            r["uso"] = round(r["total"] / disp, 4) if disp else None
+            resumo.setdefault(pid, {})[str(ano)] = r
+    log(f"[ceap_aleam] {len(gabinetes)} gabinetes, {len(notas)} notas, {len(resumo)} ligados a políticos")
+    return {"cota": resumo, "notas": notas}
+
+
+# ------------------------------------------------------------ Diário Oficial
+
+DIAS_DIARIO = 60       # janela de edições lidas a cada coleta
+DIAS_MENCOES = 365     # menções guardadas
+DOE = "https://diario.imprensaoficial.am.gov.br"
+
+TIPOS_ATO = [
+    ("Nomeação", r"\bnomea|\bnomear"),
+    ("Exoneração", r"exonera"),
+    ("Diárias e viagens", r"\bdiaria|viagem"),
+    ("Licença", r"licenca"),
+    ("Projeto de lei", r"projeto de lei"),
+    ("Lei", r"(?<!projeto de )\blei (complementar |ordinaria )?n"),
+    ("Requerimento", r"requerimento"),
+    ("Indicação", r"\bindicacao"),
+    ("Convênio ou emenda", r"convenio|termo de fomento|emenda parlamentar"),
+    ("Decreto", r"\bdecreto"),
+]
+
+
+ASSINATURA = re.compile(r"\s*(?:[-–,]\s*)?(?:[a-z]+\s*)?(?:presidente|\d+[ºo°]? ?vice|vice-presidente|prefeit[oa]|secretari[oa]|governador|corregedor|ouvidor|diretor|lider|ordenador)")
+
+
+def texto_pdf(conteudo: bytes) -> str | None:
+    """Extrai o texto de um PDF com pdftotext (poppler ou xpdf); se não houver, tenta pypdf."""
+    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
+        f.write(conteudo)
+        caminho = f.name
+    try:
+        if shutil.which("pdftotext"):
+            r = subprocess.run(["pdftotext", "-enc", "UTF-8", caminho, "-"], capture_output=True, timeout=300)
+            if r.returncode == 0:
+                return r.stdout.decode("utf-8", "replace")
+        try:
+            from pypdf import PdfReader  # opcional
+            return "\n".join((p.extract_text() or "") for p in PdfReader(caminho).pages)
+        except ImportError:
+            return None
+    finally:
+        Path(caminho).unlink(missing_ok=True)
+
+
+def edicoes_aleam(desde: date) -> list[dict]:
+    saida = []
+    for pagina in range(1, 15):
+        corpo = baixar(f"https://www.aleam.gov.br/diario/?cpage={pagina}", timeout=120).decode("utf-8", "replace")
+        achou = re.findall(r'href="([^"]+\.pdf)"[^>]*>\s*Edição nº\s*(\d+)\s*</a>.*?cont-header-date">\s*(\d\d)/(\d\d)/(\d{4})', corpo, re.S)
+        for url, num, d, m, a in achou:
+            saida.append({"fonte": "aleam", "nome": "Diário Oficial Eletrônico da ALEAM", "numero": num,
+                          "data": f"{a}-{m}-{d}", "url": url})
+        if not achou or min(f"{a}-{m}-{d}" for _, _, d, m, a in achou) < desde.isoformat():
+            break
+    return [e for e in {e["url"]: e for e in saida}.values() if e["data"] >= desde.isoformat()]
+
+
+def edicoes_cmm(desde: date) -> list[dict]:
+    itens = jget(f"https://www.cmm.am.gov.br/wp-json/wp/v2/diario-oficial?per_page=60&after={desde.isoformat()}T00:00:00", timeout=120)
+    saida = []
+    for it in itens:
+        midia = jget(f"https://www.cmm.am.gov.br/wp-json/wp/v2/media?parent={it['id']}", timeout=120)
+        pdf = next((m["source_url"] for m in midia if m.get("mime_type") == "application/pdf"), None)
+        if pdf:
+            saida.append({"fonte": "cmm", "nome": "Diário Oficial Eletrônico da CMM",
+                          "numero": html.unescape(it["title"]["rendered"]), "data": it["date"][:10], "url": pdf})
+    return saida
+
+
+def edicoes_doe(desde: date) -> list[dict]:
+    saida, dia = [], desde
+    while dia <= date.today():
+        if dia.weekday() < 5:
+            r = jget(f"{DOE}/apifront/portal/edicoes/edicoes_from_data/{dia.isoformat()}.json", timeout=60)
+            for it in r.get("itens") or []:
+                extra = f" · {it['suplemento_nome']}" if it.get("suplemento_nome") else (" · suplemento" if it.get("suplemento") else "")
+                saida.append({"fonte": "doe", "nome": "Diário Oficial do Estado do Amazonas" + extra,
+                              "numero": str(it["numero"]), "data": dia.isoformat(),
+                              "url": f"{DOE}/portal/edicoes/download/{it['id']}"})
+        dia += timedelta(days=1)
+    return saida
+
+
+def padroes_nome(p: dict, fonte: str) -> list[str]:
+    """Formas de achar o político no texto, já sem acento e em minúsculas."""
+    nome = re.sub(r"\s+", " ", sem_acento(p["nome"]).replace("’", "'")).strip()
+    sem_titulo = re.sub(r"^(dra?\.?|delegad[oa]|comandante|cabo|capitao|coronel|pastor[a]?|professor[a]?) ", "", nome)
+    cargos = {"aleam": r"deputad[oa]", "camara": r"deputad[oa]", "cmm": r"vereador[a]?", "senado": r"senador[a]?",
+              "prefeituras": r"prefeit[oa]", "governo": r"vice-governador[a]?|governador[a]?"}
+    pads = [r"\b(?:%s)(?: (?:estadual|federal|municipal))? %s\b" % (cargos.get(p["casa"], "x^"), re.escape(nome))]
+    if sem_titulo != nome:
+        pads.append(r"\b(?:%s) %s\b" % (cargos.get(p["casa"], "x^"), re.escape(sem_titulo)))
+    civil = sem_acento(p.get("nome_completo") or "")
+    if len(civil.split()) >= 3:
+        pads.append(r"\b%s\b" % re.escape(civil))
+    # No diário da própria casa o nome parlamentar sozinho é seguro quando tem duas palavras ou mais,
+    # desde que não seja o começo de um nome mais longo (ex.: um servidor homônimo "Felipe Souza dos Santos")
+    if fonte == p["casa"] and len(nome.split()) >= 2:
+        pads.append(r"\b%s\b(?! (?:d[aeo]s?|e) \w)" % re.escape(nome))
+    return pads
+
+
+def tipo_ato(antes: str, depois: str) -> str:
+    """Tipo do ato: a palavra-chave mais próxima antes do nome; se não houver, a primeira logo depois."""
+    melhor, pos = None, -1
+    for nome, padrao in TIPOS_ATO:
+        for m in re.finditer(padrao, antes):
+            if m.start() > pos:
+                melhor, pos = nome, m.start()
+    if melhor:
+        return melhor
+    for nome, padrao in TIPOS_ATO:
+        if re.search(padrao, depois):
+            return nome
+    return "Menção"
+
+
+def coletar_diarios() -> dict:
+    """Menções aos políticos nos diários oficiais da ALEAM, da CMM e do Estado (DOE-AM)."""
+    if not shutil.which("pdftotext"):
+        try:
+            import pypdf  # noqa: F401
+        except ImportError:
+            raise RuntimeError("instale o pdftotext (pacote poppler-utils) ou o pypdf para ler os diários")
+    ant = ler("fontes/diarios.json") or {}
+    lidas = {e["url"]: e for e in ant.get("edicoes", [])}
+    hoje = date.today()
+    desde = hoje - timedelta(days=DIAS_DIARIO)
+
+    edicoes = []
+    for nome, fn in (("aleam", edicoes_aleam), ("cmm", edicoes_cmm), ("doe", edicoes_doe)):
+        try:
+            e = fn(desde)
+            edicoes += e
+            log(f"[diarios] {nome}: {len(e)} edições desde {desde}")
+        except Exception as erro:  # noqa: BLE001
+            log(f"[diarios] {nome} FALHOU: {erro}")
+
+    politicos = []
+    for chave in ("cmm", "aleam", "camara", "senado", "prefeituras"):
+        politicos += (ler(f"fontes/{chave}.json") or {}).get("politicos", [])
+    politicos += json.loads((DADOS / "executivo-manual.json").read_text(encoding="utf-8"))["titulares"]
+    # Governador e vice assinam quase todo ato do DOE; ali não entram
+    alvos = {f: [(p, re.compile("|".join(padroes_nome(p, f)))) for p in politicos
+                 if not (f == "doe" and p["casa"] == "governo")] for f in ("aleam", "cmm", "doe")}
+    formas = {re.sub(r"\s+", " ", sem_acento(p["nome"]).replace("’", "'")) for p in politicos if len(p["nome"]) > 5}
+    formas |= {sem_acento(p["nome_completo"]) for p in politicos if len((p.get("nome_completo") or "").split()) >= 3}
+    todos_nomes = re.compile("|".join(sorted(map(re.escape, formas), key=len, reverse=True)))
+
+    mencoes = [m for m in ant.get("mencoes", []) if m["data"] >= (hoje - timedelta(days=DIAS_MENCOES)).isoformat()]
+    novas = [e for e in edicoes if e["url"] not in lidas]
+    log(f"[diarios] {len(novas)} edições novas para ler")
+
+    def ler_edicao(e):
+        try:
+            return e, texto_pdf(baixar(e["url"], timeout=300))
+        except Exception as erro:  # noqa: BLE001
+            log(f"[diarios] {e['url']}: {erro}")
+            return e, None
+
+    with ThreadPoolExecutor(3) as ex:
+        for e, texto in ex.map(ler_edicao, novas):
+            if texto is None:
+                continue
+            texto = re.sub(r"-\n(?=\w)", "", texto)
+            texto = re.sub(r"<#[^>]*>", " ", texto)  # marcadores internos do DOE
+            texto = re.sub(r"\s+", " ", texto)
+            norm = sem_acento(texto).replace("’", "'")
+            if len(norm) != len(texto):
+                texto = norm
+            achadas = 0
+            for p, rx in alvos[e["fonte"]]:
+                vistos = 0
+                for m in rx.finditer(norm):
+                    ini, fim = max(0, m.start() - 260), min(len(norm), m.end() + 260)
+                    # Assinatura de ofício (presidente, prefeito, secretário) não é notícia sobre o político
+                    if ASSINATURA.match(norm, m.end()) or re.search(r"presidente:? ?$", norm[max(0, m.start() - 40):m.start()]):
+                        continue
+                    # Listas de nomes (expediente, Mesa, comissões, chamadas) não contam
+                    if len(set(todos_nomes.findall(norm[max(0, m.start() - 180):m.end() + 180]))) >= 3:
+                        continue
+                    trecho = texto[ini:fim].strip()
+                    mencoes.append({"politico": p["id"], "politico_nome": p["nome"], "fonte": e["fonte"],
+                                    "diario": e["nome"], "edicao": e["numero"], "data": e["data"], "url": e["url"],
+                                    "tipo": tipo_ato(norm[max(0, m.start() - 160):m.start()], norm[m.end():m.end() + 60]), "trecho": ("…" if ini else "") + trecho + ("…" if fim < len(norm) else "")})
+                    achadas += 1
+                    vistos += 1
+                    if vistos >= 3:
+                        break
+            lidas[e["url"]] = {**e, "mencoes": achadas, "lida_em": HOJE}
+
+    janela = {e["url"] for e in edicoes}
+    lista = sorted([e for u, e in lidas.items() if u in janela or e["data"] >= desde.isoformat()],
+                   key=lambda e: (e["data"], e["fonte"]), reverse=True)
+    mencoes.sort(key=lambda m: m["data"], reverse=True)
+    log(f"[diarios] {len(lista)} edições na janela, {len(mencoes)} menções guardadas")
+    return {"edicoes": lista, "mencoes": mencoes}
 
 
 def coletar_camara_atividade() -> dict:
@@ -862,6 +1162,8 @@ FONTES_INFO = {
     "ceap_cmm": ("Câmara Municipal de Manaus — Cota parlamentar (SIGAE)", "https://www.cmm.am.gov.br/transparencia/#cotas-ceap"),
     "camara_atividade": ("Câmara dos Deputados — Cota, presença e votações", "https://dadosabertos.camara.leg.br/swagger/api.html#staticfile"),
     "eleicoes": ("TSE — Votos e bens declarados", "https://dadosabertos.tse.jus.br"),
+    "ceap_aleam": ("Assembleia Legislativa do Amazonas — Cota parlamentar (CEAP)", "https://www.aleam.gov.br/transparencia/controle-de-cota-parlamentar/"),
+    "diarios": ("Diários oficiais: ALEAM, Câmara Municipal de Manaus e Estado do Amazonas", "https://diario.imprensaoficial.am.gov.br"),
 }
 # Fontes pesadas que só rodam quando pedidas pelo nome
 SOB_DEMANDA = {"eleicoes"}
@@ -877,6 +1179,8 @@ def main() -> int:
         "emendas": coletar_emendas,  # depende de camara e senado
         "ceap_cmm": coletar_ceap_cmm,  # depende de cmm
         "camara_atividade": coletar_camara_atividade,  # depende de camara
+        "ceap_aleam": coletar_ceap_aleam,  # depende de aleam
+        "diarios": coletar_diarios,  # depende das casas
         "eleicoes": coletar_eleicoes,  # sob demanda
     }
     meta_ant = ler("meta.json", {}) or {}
@@ -913,6 +1217,11 @@ def main() -> int:
     ceap_cmm = ler("fontes/ceap_cmm.json") or {}
     atividade = ler("fontes/camara_atividade.json") or {}
     eleicoes = (ler("fontes/eleicoes.json") or {}).get("eleicoes", {})
+    ceap_aleam = ler("fontes/ceap_aleam.json") or {}
+    diarios = ler("fontes/diarios.json") or {}
+    por_politico = defaultdict(list)
+    for m in diarios.get("mencoes", []):
+        por_politico[m["politico"]].append(m)
     for p in politicos:
         if p["id"] in emendas:
             p["emendas"] = emendas[p["id"]]
@@ -925,8 +1234,15 @@ def main() -> int:
             p["votacoes"] = a["votos"]
         if p["id"] in eleicoes:
             p["eleicao"] = eleicoes[p["id"]]
+        if p["id"] in ceap_aleam.get("cota", {}) and "cota" not in p:
+            p["cota"] = ceap_aleam["cota"][p["id"]]
+        if por_politico.get(p["id"]):
+            ms = por_politico[p["id"]]
+            p["diario"] = {"total": len(ms), "por_tipo": dict(Counter(m["tipo"] for m in ms).most_common()),
+                           "recentes": [{k: m[k] for k in ("diario", "edicao", "data", "url", "tipo", "trecho")} for m in ms[:8]]}
     # Notas fiscais da cota, das duas casas, num arquivo próprio (só a página de gastos carrega)
-    salvar("gastos.json", sorted(ceap_cmm.get("notas", []) + atividade.get("notas", []),
+    salvar("diario.json", {"edicoes": diarios.get("edicoes", []), "mencoes": diarios.get("mencoes", [])})
+    salvar("gastos.json", sorted(ceap_cmm.get("notas", []) + atividade.get("notas", []) + ceap_aleam.get("notas", []),
                                  key=lambda n: n.get("data") or "", reverse=True))
     normas.sort(key=lambda n: n.get("data") or "", reverse=True)
     executivo = json.loads((DADOS / "executivo-manual.json").read_text(encoding="utf-8"))

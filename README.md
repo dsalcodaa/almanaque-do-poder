@@ -15,10 +15,11 @@ Uma plataforma de transparência, inteligência pública e análise política.
 | `rankings.html` | Rankings: leis, homenagens, presença, fidelidade ao partido, cota, patrimônio, votos e emendas |
 | `gastos.html` | Cota parlamentar: notas fiscais, categorias, fornecedores, evolução mensal e CSV |
 | `comparar.html?ids=a,b` | Dois políticos lado a lado |
+| `diario.html` | Citações dos políticos nos diários oficiais (ALEAM, CMM e DOE-AM) |
 | `sobre.html` | Página "Sobre o projeto": finalidade, fontes, método e relação com a NEX |
 | `relatorio.html` | Modelo de relatório, com exportação em PDF |
 | `scripts/coletar.py` | Coletor de dados das fontes oficiais (só biblioteca padrão do Python) |
-| `data/` | Dados gerados pelo coletor (`politicos.json`, `normas.json`, `meta.json`, `gastos.json`, `eleitos-2026.json`) |
+| `data/` | Dados gerados pelo coletor (`politicos.json`, `normas.json`, `meta.json`, `gastos.json`, `diario.json`, `eleitos-2026.json`) |
 | `data/executivo-manual.json` | Ajustes do Executivo (renúncias, sucessões), sempre com fonte |
 | `assets/js/app.js` | Renderiza as páginas a partir dos dados |
 | `assets/css/tokens.css` | Design system: cores, tipografia e espaçamento |
@@ -48,6 +49,8 @@ python -m http.server 8000
 | Eleitos em 2026 | TSE, candidaturas 2026 |
 | Emendas (federais) | Portal da Transparência, API de dados (segredo `PORTAL_TRANSPARENCIA_KEY`) |
 | Cota dos vereadores | SIGAE da Câmara Municipal de Manaus |
+| Cota dos deputados estaduais | Controle de cota parlamentar da ALEAM (CSV oficial) |
+| Diário Oficial | Diários da ALEAM, da Câmara Municipal de Manaus e do Estado (DOE-AM) |
 | Cota, presença e votos dos deputados federais | Arquivos de dados abertos da Câmara dos Deputados |
 | Votos e patrimônio | TSE: `votacao_candidato_munzona` e `bem_candidato` |
 
@@ -61,7 +64,9 @@ python scripts/coletar.py eleicoes   # votos e patrimônio (TSE, arquivos grande
 
 O GitHub Actions roda o coletor todo dia às 6h (horário de Manaus), salva os dados no repositório e publica o site.
 
-Ainda não integrados: Diário Oficial e verba de gabinete da ALEAM.
+A leitura dos diários usa o `pdftotext` (pacote `poppler-utils` no Linux). Sem ele, o coletor tenta o `pypdf`; sem nenhum dos dois, pula os diários e mantém os dados anteriores.
+
+Ainda não integrado: Diário Oficial do Município de Manaus (o servidor não respondeu nos testes).
 
 ## Identidade visual
 

@@ -37,6 +37,10 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Instalar leitor de PDF (diários oficiais)
+        if: github.event_name == 'schedule' || inputs.coletar
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq poppler-utils
+
       - name: Coletar dados das fontes oficiais
         if: github.event_name == 'schedule' || inputs.coletar
         run: python scripts/coletar.py
