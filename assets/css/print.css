@@ -20,7 +20,9 @@
   html, body { background: #fff; }
   body { font-size: 10.5pt; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   .wrap { max-width: none; padding: 0; }
-  .no-print, .skip, .masthead__nav { display: none !important; }
+  .no-print, .skip, .masthead__nav, .filtros, #mais { display: none !important; }
+  .avatar img { filter: grayscale(1); }
+  .barras__barra, .barras__trilho { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   .hero { padding: 10mm 0 6mm; }
   .section { padding: 6mm 0; break-inside: avoid; }
   .pillar, .ledger li { break-inside: avoid; }

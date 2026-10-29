@@ -1,0 +1,61 @@
+{
+  "_leia": "Titulares do Executivo que mudaram depois da eleição. Cada entrada precisa de fonte. O coletor usa estes registros no lugar dos eleitos do TSE para o mesmo município.",
+  "titulares": [
+    {
+      "id": "exec-governador",
+      "nome": "Roberto Cidade",
+      "nome_completo": "Roberto Cidade",
+      "cargo": "Governador(a)",
+      "casa": "governo",
+      "esfera": "estadual",
+      "partido": "UNIÃO",
+      "uf": "AM",
+      "municipio": null,
+      "foto": null,
+      "email": null,
+      "profissao": null,
+      "fonte": "https://bncamazonas.com.br/poder/cidade-15/",
+      "periodo": "2026-05-04",
+      "nota": "Eleito de forma indireta pela Assembleia Legislativa após a renúncia de Wilson Lima e Tadeu de Souza (5/4/2026). Mandato até janeiro de 2027."
+    },
+    {
+      "id": "exec-vice-governador",
+      "nome": "Serafim Corrêa",
+      "nome_completo": "Serafim Corrêa",
+      "cargo": "Vice-governador(a)",
+      "casa": "governo",
+      "esfera": "estadual",
+      "partido": "PSB",
+      "uf": "AM",
+      "municipio": null,
+      "foto": null,
+      "email": null,
+      "profissao": null,
+      "fonte": "https://revistacenarium.com.br/da-estreia-nas-urnas-em-2016-ao-comando-do-estado-a-trajetoria-do-novo-governador-do-am/",
+      "periodo": "2026-05-04",
+      "nota": "Eleito de forma indireta pela Assembleia Legislativa na chapa de Roberto Cidade."
+    },
+    {
+      "id": "exec-prefeito-manaus",
+      "nome": "Renato Junior",
+      "nome_completo": "Renato Junior",
+      "cargo": "Prefeito(a)",
+      "casa": "prefeituras",
+      "esfera": "municipal",
+      "partido": "AVANTE",
+      "uf": "AM",
+      "municipio": "Manaus",
+      "foto": null,
+      "email": null,
+      "profissao": null,
+      "fonte": "https://ac24horas.com/2026/04/01/david-almeida-renuncia-a-prefeitura-de-manaus-e-renato-junior-assume-cargo/",
+      "periodo": "2026-03-31",
+      "nota": "Vice-prefeito eleito em 2024. Assumiu após a renúncia de David Almeida para disputar o governo do estado."
+    }
+  ],
+  "fontes": [
+    {"nome": "BNC Amazonas — posse de Roberto Cidade", "url": "https://bncamazonas.com.br/poder/cidade-15/"},
+    {"nome": "Revista Cenarium — eleição indireta na Aleam", "url": "https://revistacenarium.com.br/da-estreia-nas-urnas-em-2016-ao-comando-do-estado-a-trajetoria-do-novo-governador-do-am/"},
+    {"nome": "ac24horas — Renato Junior assume a Prefeitura de Manaus", "url": "https://ac24horas.com/2026/04/01/david-almeida-renuncia-a-prefeitura-de-manaus-e-renato-junior-assume-cargo/"}
+  ]
+}

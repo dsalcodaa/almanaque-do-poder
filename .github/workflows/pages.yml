@@ -1,27 +1,59 @@
-name: Publicar no GitHub Pages
+name: Atualizar dados e publicar
 
 on:
   push:
     branches: [main]
+  schedule:
+    # Todo dia às 6h (horário de Manaus, UTC-4)
+    - cron: "0 10 * * *"
   workflow_dispatch:
+    inputs:
+      coletar:
+        description: "Coletar dados das fontes oficiais antes de publicar"
+        type: boolean
+        default: true
 
 permissions:
-  contents: read
+  contents: write
   pages: write
   id-token: write
 
 concurrency:
   group: pages
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        if: github.event_name == 'schedule' || inputs.coletar
+        with:
+          python-version: "3.12"
+
+      - name: Coletar dados das fontes oficiais
+        if: github.event_name == 'schedule' || inputs.coletar
+        run: python scripts/coletar.py
+
+      - name: Salvar dados atualizados no repositório
+        if: github.event_name == 'schedule' || inputs.coletar
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/
+          if git diff --cached --quiet; then
+            echo "Sem mudanças nos dados."
+          else
+            git commit -m "dados: atualização automática $(date -u +%F)"
+            git push
+          fi
+
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

@@ -32,7 +32,7 @@
   }
   </script>
 </head>
-<body>
+<body data-page="inicio">
   <a class="skip" href="#conteudo">Pular para o conteúdo</a>
 
   <div class="wrap">
@@ -40,7 +40,9 @@
       <a class="masthead__brand" href="index.html">Almanaque do Poder</a>
       <nav class="masthead__nav" aria-label="Principal">
         <a href="index.html" aria-current="page">Início</a>
-        <a href="relatorio.html">Relatórios</a>
+        <a href="politicos.html">Políticos</a>
+        <a href="leis.html">Leis e projetos</a>
+        <a href="rankings.html">Rankings</a>
         <a href="sobre.html">Sobre o projeto</a>
       </nav>
     </header>
@@ -59,45 +61,37 @@
         </div>
       </section>
 
-      <section class="section" aria-labelledby="o-que-e">
-        <p class="kicker">O que é</p>
-        <h2 class="h2" id="o-que-e">Quem decide, o que decide e com que resultado</h2>
-        <ul class="pillars">
-          <li class="pillar">
-            <span class="pillar__index">01</span>
-            <h3 class="pillar__title">Transparência</h3>
-            <p class="pillar__text">Dados públicos sobre mandatos, normas e atos oficiais, organizados para leitura direta.</p>
-          </li>
-          <li class="pillar">
-            <span class="pillar__index">02</span>
-            <h3 class="pillar__title">Inteligência pública</h3>
-            <p class="pillar__text">Cruzamento de fontes oficiais para revelar padrões que não aparecem em um registro isolado.</p>
-          </li>
-          <li class="pillar">
-            <span class="pillar__index pillar__index--accent">03</span>
-            <h3 class="pillar__title">Análise política</h3>
-            <p class="pillar__text">Leitura contextualizada, com fonte citada em cada dado publicado.</p>
-          </li>
-        </ul>
+      <section class="section" aria-labelledby="agora">
+        <p class="kicker">Agora</p>
+        <h2 class="h2" id="agora">O poder no Amazonas, em números</h2>
+        <div id="painel"><p class="muted">Carregando…</p></div>
       </section>
 
       <section class="section" aria-labelledby="explore">
         <p class="kicker">Explore</p>
-        <h2 class="h2" id="explore">Relatórios e publicações</h2>
-        <p class="prose muted">Cada relatório pode ser exportado em PDF e mantém a fonte dos dados e o crédito institucional.</p>
+        <h2 class="h2" id="explore">Quem decide, o que decide e com que resultado</h2>
         <p style="display:flex; flex-wrap:wrap; gap: var(--space-2); margin-top: var(--space-3);">
-          <a class="button" href="relatorio.html">Ver modelo de relatório</a>
-          <a class="button button--ghost" href="sobre.html">Sobre o projeto</a>
+          <a class="button" href="politicos.html">Ver políticos</a>
+          <a class="button button--ghost" href="leis.html">Leis e projetos</a>
+          <a class="button button--ghost" href="rankings.html">Rankings</a>
         </p>
+      </section>
+
+      <section class="section" aria-labelledby="eleicoes">
+        <p class="kicker">Eleições 2026</p>
+        <h2 class="h2" id="eleicoes">Eleitos que tomam posse em 2027</h2>
+        <p class="prose muted">Resultado oficial do TSE para o Amazonas.</p>
+        <div class="eleitos" id="eleitos"></div>
       </section>
     </main>
 
     <footer class="site-footer">
       <p>Almanaque do Poder · Desenvolvido pela <a href="sobre.html#nex"><strong>NEX — Hub de Análise Estratégica</strong></a>.</p>
-      <p><a href="sobre.html">Sobre o projeto</a></p>
+      <p><span data-atualizado></span> <a href="sobre.html#fontes">Fontes</a></p>
     </footer>
   </div>
 
+  <script src="assets/js/app.js" defer></script>
   <script src="assets/js/nex-brand.js" defer></script>
 </body>
 </html>

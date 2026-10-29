@@ -8,9 +8,17 @@ Uma plataforma de transparência, inteligência pública e análise política.
 
 | Caminho | Conteúdo |
 | --- | --- |
-| `index.html` | Página inicial |
-| `sobre.html` | Página "Sobre o projeto": finalidade, transparência e relação com a NEX |
+| `index.html` | Página inicial, com painel de números e eleitos de 2026 |
+| `politicos.html` | Lista de políticos com filtros por casa, partido e nome |
+| `politico.html?id=…` | Perfil: proposições, normas aprovadas, homenagens, contato e fonte |
+| `leis.html` | Normas aprovadas, com filtros por casa, categoria, ano e autor |
+| `rankings.html` | Rankings e comparativos entre parlamentares |
+| `sobre.html` | Página "Sobre o projeto": finalidade, fontes, método e relação com a NEX |
 | `relatorio.html` | Modelo de relatório, com exportação em PDF |
+| `scripts/coletar.py` | Coletor de dados das fontes oficiais (só biblioteca padrão do Python) |
+| `data/` | Dados gerados pelo coletor (`politicos.json`, `normas.json`, `meta.json`, `eleitos-2026.json`) |
+| `data/executivo-manual.json` | Ajustes do Executivo (renúncias, sucessões), sempre com fonte |
+| `assets/js/app.js` | Renderiza as páginas a partir dos dados |
 | `assets/css/tokens.css` | Design system: cores, tipografia e espaçamento |
 | `assets/css/style.css` | Componentes |
 | `assets/css/print.css` | Layout do PDF, com crédito institucional em todas as páginas |
@@ -24,6 +32,29 @@ Uma plataforma de transparência, inteligência pública e análise política.
 ```sh
 python -m http.server 8000
 ```
+
+## Dados
+
+| Quem | Fonte |
+| --- | --- |
+| Vereadores de Manaus | SAPL da Câmara Municipal de Manaus |
+| Deputados estaduais | SAPL da Assembleia Legislativa do Amazonas |
+| Deputados federais | API de Dados Abertos da Câmara dos Deputados |
+| Senadores | API de Dados Abertos do Senado Federal |
+| Prefeitos | TSE, candidaturas 2024, mais ajustes em `data/executivo-manual.json` |
+| Governador e vice | `data/executivo-manual.json`, com fonte |
+| Eleitos em 2026 | TSE, candidaturas 2026 |
+
+Para atualizar os dados localmente:
+
+```sh
+python scripts/coletar.py            # todas as fontes (cerca de 12 minutos)
+python scripts/coletar.py cmm aleam  # só as fontes indicadas
+```
+
+O GitHub Actions roda o coletor todo dia às 6h (horário de Manaus), salva os dados no repositório e publica o site.
+
+Ainda não integrados: Diário Oficial e Portal da Transparência.
 
 ## Identidade visual
 

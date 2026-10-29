@@ -204,3 +204,113 @@ a:hover { color: var(--accent); }
 }
 .button:hover { background: var(--accent); border-color: var(--accent); color: var(--paper); }
 .button--ghost { background: transparent; color: var(--ink); }
+
+/* ---------- Dados: filtros ---------- */
+.filtros {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: end;
+  padding: var(--space-3) 0;
+  border-bottom: 1px solid var(--rule-soft);
+}
+.filtros label { display: flex; flex-direction: column; gap: 0.3rem; flex: 1 1 12rem; }
+.filtros label > span {
+  font-size: 0.6875rem; font-weight: 600; letter-spacing: var(--tracking-caps);
+  text-transform: uppercase; color: var(--muted);
+}
+.filtros select,
+.filtros input {
+  font: inherit; font-size: var(--fs-small);
+  padding: 0.6rem 0.7rem;
+  background: #fbf9f5; color: var(--ink);
+  border: 1px solid var(--rule-soft); border-radius: 0;
+}
+.filtros select:focus, .filtros input:focus { outline: 2px solid var(--accent); outline-offset: 0; }
+.total { margin: var(--space-2) 0; font-size: var(--fs-small); color: var(--muted); font-variant-numeric: tabular-nums; }
+
+/* ---------- Avatar ---------- */
+.avatar {
+  position: relative; flex: none;
+  width: 3.5rem; height: 3.5rem;
+  display: inline-grid; place-items: center;
+  background: var(--paper-deep); overflow: hidden;
+  font: 700 1.1rem/1 var(--font-serif); color: var(--muted);
+}
+.avatar img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; filter: grayscale(1) contrast(1.05); }
+.avatar--grande { width: 7.5rem; height: 7.5rem; font-size: 2.2rem; }
+
+/* ---------- Cards de político ---------- */
+.cards {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(17rem, 1fr));
+  gap: 0 var(--space-3); margin: 0; padding: 0; list-style: none;
+}
+.card {
+  display: flex; gap: var(--space-2); align-items: center;
+  padding: var(--space-2) 0; border-top: 1px solid var(--rule-soft);
+  text-decoration: none;
+}
+.card:hover .card__nome { color: var(--accent); }
+.card__corpo { display: flex; flex-direction: column; min-width: 0; }
+.card__nome { font: 700 1.125rem/1.2 var(--font-serif); }
+.card__meta { font-size: var(--fs-small); color: var(--muted); }
+.card__partido { font-size: 0.75rem; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-soft); }
+
+/* ---------- Perfil ---------- */
+.perfil__topo { display: flex; gap: var(--space-3); align-items: center; flex-wrap: wrap; }
+.nota { max-width: 62ch; margin-top: var(--space-3); padding-left: var(--space-2); border-left: 4px solid var(--rule-soft); color: var(--ink-soft); }
+.hero--perfil { padding-top: var(--space-5); padding-bottom: var(--space-3); }
+
+/* ---------- Barras (proporções e rankings) ---------- */
+.barras { margin: var(--space-2) 0 0; padding: 0; list-style: none; }
+.barras li {
+  display: grid; grid-template-columns: minmax(9rem, 16rem) 1fr 3.5rem;
+  gap: var(--space-2); align-items: center; padding: 0.45rem 0;
+}
+.barras--rank li { grid-template-columns: 1.5rem minmax(9rem, 20rem) 1fr 3.5rem; }
+.barras__pos { font: 700 1rem var(--font-serif); color: var(--muted); }
+.barras__rot { font-size: var(--fs-small); text-decoration: none; overflow: hidden; text-overflow: ellipsis; }
+a.barras__rot:hover { color: var(--accent); }
+.barras__trilho { height: 0.65rem; background: var(--paper-deep); }
+.barras__barra { display: block; height: 100%; background: var(--ink); }
+.barras__barra--accent { background: var(--accent); }
+.barras__v { text-align: right; font-weight: 600; font-variant-numeric: tabular-nums; }
+@media (max-width: 34rem) {
+  .barras li { grid-template-columns: 1fr 3rem; }
+  .barras--rank li { grid-template-columns: 1.5rem 1fr 3rem; }
+  .barras__trilho { grid-column: 1 / -1; order: 3; }
+  .barras--rank .barras__trilho { grid-column: 2 / -1; }
+}
+
+/* ---------- Ledger extras ---------- */
+.ledger__sub { display: block; margin-top: 0.25rem; font-size: var(--fs-small); color: var(--muted); }
+.ledger--normas li { grid-template-columns: 6.5rem 1fr; }
+.tag {
+  display: inline-block; margin-left: 0.25rem; padding: 0.05rem 0.4rem;
+  border: 1px solid var(--rule-soft); font-size: 0.6875rem; font-weight: 600;
+  letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); white-space: nowrap;
+}
+.tag--accent { border-color: var(--accent); color: var(--accent); }
+
+/* ---------- Início: casas e eleitos ---------- */
+.casas {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr));
+  gap: var(--space-2); margin: var(--space-4) 0 0; padding: 0; list-style: none;
+}
+.casas a { display: flex; flex-direction: column; padding-top: var(--space-1); border-top: 1px solid var(--rule); text-decoration: none; }
+.casas__n { font: 700 2rem/1.1 var(--font-serif); }
+.casas__nome { font-size: var(--fs-small); color: var(--muted); }
+.casas a:hover .casas__n { color: var(--accent); }
+.eleitos { display: grid; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); gap: var(--space-3); }
+.eleitos__cargo { margin: 0 0 var(--space-1); font-size: var(--fs-small); font-weight: 700; letter-spacing: var(--tracking-caps); text-transform: uppercase; }
+.eleitos__lista { margin: 0; padding: 0; list-style: none; font-size: var(--fs-small); line-height: 1.8; }
+
+.aviso { padding: var(--space-2); border-left: 4px solid var(--accent); background: #fbf9f5; }
+.eleitos__grupo--largo { grid-column: 1 / -1; }
+.eleitos__grupo--largo .eleitos__lista { columns: 4 12rem; column-gap: var(--space-3); }
+@media (max-width: 34rem) {
+  :root { --space-6: 3.5rem; --space-5: 2.75rem; }
+  .filtros label { flex: 1 1 9rem; }
+  .filtros label:has(input) { flex-basis: 100%; }
+  .ledger--normas li { grid-template-columns: 1fr; }
+}
