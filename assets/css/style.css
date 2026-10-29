@@ -1,0 +1,206 @@
+@import url("tokens.css");
+
+*,
+*::before,
+*::after { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; }
+
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: var(--fs-body);
+  line-height: 1.55;
+  font-feature-settings: "tnum" 0;
+  -webkit-font-smoothing: antialiased;
+}
+
+a { color: inherit; text-decoration-thickness: 1px; text-underline-offset: 0.2em; }
+a:hover { color: var(--accent); }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+
+.wrap {
+  width: 100%;
+  max-width: calc(var(--measure) + var(--gutter) * 2);
+  margin: 0 auto;
+  padding: 0 var(--gutter);
+}
+
+.skip {
+  position: absolute; left: -999px; top: 0;
+  background: var(--ink); color: var(--paper); padding: var(--space-1) var(--space-2);
+}
+.skip:focus { left: var(--space-2); }
+
+/* ---------- Cabeçalho ---------- */
+.masthead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-1) var(--space-3);
+  padding: var(--space-4) 0 var(--space-2);
+  border-bottom: 2px solid var(--rule);
+}
+.masthead__brand {
+  font-weight: 700;
+  font-size: var(--fs-small);
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+  text-decoration: none;
+}
+.masthead__nav { display: flex; flex-wrap: wrap; gap: var(--space-3); }
+.masthead__nav a {
+  font-weight: 600;
+  font-size: var(--fs-small);
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+  color: var(--muted);
+  text-decoration: none;
+}
+.masthead__nav a:hover,
+.masthead__nav a[aria-current="page"] { color: var(--ink); }
+@media (max-width: 34rem) {
+  .masthead { padding-top: var(--space-3); }
+  .masthead__nav { width: 100%; gap: var(--space-2); }
+  .masthead__nav a { font-size: 0.6875rem; letter-spacing: 0.08em; }
+}
+
+/* ---------- Tipografia editorial ---------- */
+.kicker {
+  margin: 0 0 var(--space-1);
+  color: var(--accent);
+  font-weight: 700;
+  font-size: var(--fs-kicker);
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+}
+.display {
+  margin: 0;
+  font-family: var(--font-serif);
+  font-weight: 700;
+  font-size: var(--fs-h1);
+  line-height: 1.02;
+  letter-spacing: -0.02em;
+}
+.h2 {
+  margin: 0 0 var(--space-2);
+  font-family: var(--font-serif);
+  font-weight: 700;
+  font-size: var(--fs-h2);
+  line-height: 1.1;
+  letter-spacing: -0.01em;
+}
+.lede {
+  max-width: 44ch;
+  margin: var(--space-3) 0 0;
+  font-size: var(--fs-lede);
+  line-height: 1.45;
+  color: var(--ink-soft);
+}
+.prose { max-width: 62ch; }
+.prose p { margin: 0 0 var(--space-2); }
+.muted { color: var(--muted); }
+
+/* ---------- Seções ---------- */
+.hero { padding: var(--space-6) 0 var(--space-5); }
+.section { padding: var(--space-5) 0; }
+.section + .section { border-top: 1px solid var(--rule-soft); }
+
+/* Pilares com filete grosso no topo (padrão "número + legenda") */
+.pillars {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+  gap: var(--space-4) var(--space-3);
+  margin: 0; padding: 0; list-style: none;
+}
+.pillar { border-top: 3px solid var(--rule); padding-top: var(--space-2); }
+.pillar__index {
+  display: block;
+  font-family: var(--font-serif);
+  font-weight: 700;
+  font-size: var(--fs-stat);
+  line-height: 1;
+  margin-bottom: var(--space-2);
+}
+.pillar__index--accent { color: var(--accent); }
+.pillar__title { margin: 0 0 var(--space-1); font-weight: 600; font-size: 1.125rem; }
+.pillar__text { margin: 0; color: var(--muted); }
+
+/* Lista com barra lateral (padrão "data + descrição") */
+.ledger { margin: 0; padding: 0; list-style: none; }
+.ledger li {
+  display: grid;
+  grid-template-columns: 7rem 1fr;
+  gap: var(--space-2);
+  padding: var(--space-1) 0 var(--space-1) var(--space-2);
+  border-left: 4px solid var(--rule-soft);
+  margin-bottom: var(--space-2);
+}
+.ledger__key { font-weight: 600; color: var(--muted); font-variant-numeric: tabular-nums; }
+@media (max-width: 34rem) {
+  .ledger li { grid-template-columns: 1fr; gap: 0.25rem; }
+}
+
+/* ---------- Assinatura institucional NEX ---------- */
+.nex-signature {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--rule-soft);
+  color: var(--nex-ink);
+  text-decoration: none;
+}
+.nex-signature__label {
+  font-family: var(--font-sans);
+  font-weight: 600;
+  font-size: 0.6875rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--nex-muted);
+}
+.nex-signature__name {
+  font-family: var(--nex-font);
+  font-weight: 600;
+  font-size: 1.125rem;
+  line-height: 1.25;
+}
+.nex-signature__name b { font-weight: 700; letter-spacing: 0.04em; }
+.nex-signature__logo { display: block; height: var(--nex-logo-height); width: auto; }
+.nex-signature.has-logo .nex-signature__wordmark { display: none; }
+
+/* ---------- Rodapé ---------- */
+.site-footer {
+  margin-top: var(--space-5);
+  padding: var(--space-2) 0 var(--space-4);
+  border-top: 1px solid var(--rule-soft);
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: var(--space-1) var(--space-3);
+  font-size: var(--fs-small);
+  color: var(--muted);
+}
+.site-footer p { margin: 0; }
+.site-footer strong { color: var(--ink-soft); font-weight: 600; }
+.site-footer a { text-decoration: none; }
+.site-footer a:hover { text-decoration: underline; }
+
+/* ---------- Botões ---------- */
+.button {
+  display: inline-block;
+  padding: 0.7rem 1.1rem;
+  border: 2px solid var(--ink);
+  background: var(--ink);
+  color: var(--paper);
+  font: 600 var(--fs-small) / 1 var(--font-sans);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  text-decoration: none;
+  cursor: pointer;
+}
+.button:hover { background: var(--accent); border-color: var(--accent); color: var(--paper); }
+.button--ghost { background: transparent; color: var(--ink); }

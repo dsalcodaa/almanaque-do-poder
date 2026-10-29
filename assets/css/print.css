@@ -1,0 +1,29 @@
+/* Exportação em PDF (Imprimir > Salvar como PDF) */
+@page {
+  size: A4;
+  margin: 18mm 16mm 22mm;
+
+  /* Crédito institucional em todas as páginas (Chrome/Edge 131+) */
+  @bottom-left {
+    content: "Almanaque do Poder · Desenvolvido pela NEX — Hub de Análise Estratégica.";
+    font: 8pt "Inter", system-ui, sans-serif;
+    color: #6b6660;
+  }
+  @bottom-right {
+    content: counter(page) "/" counter(pages);
+    font: 600 8pt "Inter", system-ui, sans-serif;
+    color: #6b6660;
+  }
+}
+
+@media print {
+  html, body { background: #fff; }
+  body { font-size: 10.5pt; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .wrap { max-width: none; padding: 0; }
+  .no-print, .skip, .masthead__nav { display: none !important; }
+  .hero { padding: 10mm 0 6mm; }
+  .section { padding: 6mm 0; break-inside: avoid; }
+  .pillar, .ledger li { break-inside: avoid; }
+  a { text-decoration: none; }
+  .site-footer { margin-top: 8mm; break-inside: avoid; }
+}

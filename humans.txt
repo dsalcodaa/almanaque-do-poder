@@ -1,0 +1,7 @@
+/* PROJETO */
+Nome: Almanaque do Poder
+Descrição: Uma plataforma de transparência, inteligência pública e análise política.
+Idioma: Português (Brasil)
+
+/* INSTITUIÇÃO */
+Desenvolvido pela NEX — Hub de Análise Estratégica.

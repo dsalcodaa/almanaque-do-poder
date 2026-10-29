@@ -1,0 +1,49 @@
+/*
+ * Design system — Almanaque do Poder
+ * Linguagem editorial: papel quente, serifa pesada nos títulos,
+ * sans neutra no texto, um único vermelho de destaque.
+ */
+:root {
+  /* Cores */
+  --paper: #f1ece4;
+  --paper-deep: #e7e0d4;
+  --ink: #1a1a1a;
+  --ink-soft: #3a3a3a;
+  --muted: #6b6660;
+  --rule: #1a1a1a;
+  --rule-soft: #d6cfc3;
+  --accent: #b3261e;
+
+  /* Tipografia */
+  --font-serif: "Source Serif 4", "Tiempos Headline", Georgia, "Times New Roman", serif;
+  --font-sans: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+
+  --fs-kicker: 0.8125rem;
+  --fs-small: 0.875rem;
+  --fs-body: 1.0625rem;
+  --fs-lede: clamp(1.1875rem, 1rem + 0.8vw, 1.625rem);
+  --fs-h2: clamp(1.75rem, 1.3rem + 1.6vw, 2.5rem);
+  --fs-h1: clamp(2.5rem, 1.6rem + 4vw, 4.75rem);
+  --fs-stat: clamp(3rem, 2rem + 4vw, 5rem);
+
+  --tracking-caps: 0.1em;
+
+  /* Espaço */
+  --gutter: clamp(1.25rem, 4vw, 4rem);
+  --measure: 68rem;
+  --space-1: 0.5rem;
+  --space-2: 1rem;
+  --space-3: 1.5rem;
+  --space-4: 2.5rem;
+  --space-5: 4rem;
+  --space-6: 6rem;
+
+  /*
+   * Identidade NEX — pontos de entrada para a marca oficial.
+   * Substitua estes valores quando os arquivos oficiais estiverem em brand/nex/.
+   */
+  --nex-ink: var(--ink);
+  --nex-muted: var(--muted);
+  --nex-font: var(--font-serif);
+  --nex-logo-height: 1.75rem;
+}
