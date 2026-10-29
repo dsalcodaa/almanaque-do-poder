@@ -57,6 +57,7 @@ python -m http.server 8000
 | Votos, presença e cota dos senadores | Dados abertos do Senado (votações nominais e CEAPS) |
 | Histórico de todos os candidatos e municípios | TSE, candidaturas, bens, votação e fotos desde 2000 (`tse_historico`) |
 | Nome de fornecedores ocultos | BrasilAPI (base de CNPJ da Receita), cache em `data/fontes/cnpj.json` |
+| Financiamento de campanha | TSE, prestação de contas dos candidatos desde 2018 (`doacoes`; lê só o CSV do AM dentro do zip nacional) |
 | Tribunais e Ministério Público | DadosJusBr (TJAM, MPAM, TRT-11, TRE-AM); lista do TCE-AM no código |
 
 Para atualizar os dados localmente:
@@ -66,6 +67,7 @@ python scripts/coletar.py            # todas as fontes (cerca de 12 minutos)
 python scripts/coletar.py cmm aleam  # só as fontes indicadas
 python scripts/coletar.py eleicoes   # votos e patrimônio (TSE, arquivos grandes; não roda no Actions)
 python scripts/coletar.py tse_historico  # histórico, fotos e municípios (TSE desde 2000; não roda no Actions)
+python scripts/coletar.py doacoes        # financiadores de campanha (TSE desde 2018; rode depois do histórico)
 ```
 
 O GitHub Actions roda o coletor todo dia às 6h (horário de Manaus), salva os dados no repositório e publica o site.

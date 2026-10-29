@@ -1434,6 +1434,149 @@ def coletar_tse_historico() -> dict:
     return {"pessoas": len(pessoas), "municipios": len(municipios)}
 
 
+class ArquivoRemoto(io.RawIOBase):
+    """Arquivo HTTP lido por partes (Range), para abrir só um CSV dentro de um zip grande do TSE."""
+
+    def __init__(self, url: str):
+        self.url, self.pos = url, 0
+        req = urllib.request.Request(url, method="HEAD", headers={"User-Agent": UA})
+        self.tamanho = int(urllib.request.urlopen(req, timeout=60).headers["Content-Length"])
+
+    def readable(self):
+        return True
+
+    def seekable(self):
+        return True
+
+    def tell(self):
+        return self.pos
+
+    def seek(self, desloc, origem=0):
+        self.pos = desloc if origem == 0 else self.pos + desloc if origem == 1 else self.tamanho + desloc
+        return self.pos
+
+    def read(self, n=-1):
+        if n is None or n < 0:
+            n = self.tamanho - self.pos
+        if n == 0 or self.pos >= self.tamanho:
+            return b""
+        fim = min(self.pos + n, self.tamanho) - 1
+        req = urllib.request.Request(self.url, headers={"User-Agent": UA, "Range": f"bytes={self.pos}-{fim}"})
+        dados = urllib.request.urlopen(req, timeout=300).read()
+        self.pos += len(dados)
+        return dados
+
+
+def nome_doador(r: dict) -> tuple[str, str]:
+    """Nome legível e tipo do doador. Diretórios de partido viram 'PARTIDO (direção estadual)'."""
+    origem = (r.get("DS_ORIGEM_RECEITA") or "").replace("Recursos de ", "").replace("Recursos ", "").strip()
+    nome = r.get("NM_DOADOR_RFB") or ""
+    if nome.startswith("#") or not nome.strip():
+        nome = r.get("NM_DOADOR") or ""
+    nome = titulo(nome.strip()) if not nome.startswith("#") else "Não informado"
+    if "partido" in origem.lower():
+        sigla = (r.get("SG_PARTIDO_DOADOR") or "").replace("#NULO#", "").replace("#NULO", "").strip()
+        esfera = (r.get("DS_ESFERA_PARTIDARIA_DOADOR") or "").replace("#NULO#", "").replace("#NULO", "").strip().lower()
+        nome = (sigla or nome) + (f" (direção {esfera})" if esfera else "")
+    origem = origem[:1].upper() + origem[1:]
+    return nome, "Recursos próprios" if origem == "Próprios" else origem
+
+
+def coletar_doacoes() -> dict:
+    """Quem financiou as campanhas no Amazonas, de 2018 em diante (prestação de contas do TSE).
+
+    Lê só o arquivo do AM dentro do zip nacional, guarda em .cache e liga cada receita à pessoa do
+    histórico (nome + nascimento). CPF e CNPJ de doadores não são publicados no site.
+    Rode à mão depois do histórico: python scripts/coletar.py doacoes"""
+    base = "https://cdn.tse.jus.br/estatistica/sead/odsele/prestacao_contas"
+    por_pessoa: dict = defaultdict(dict)
+    doadores: dict = {}
+    candidatos = []
+    for ano in range(2018, date.today().year + 1, 2):
+        nome_csv = f"receitas_candidatos_{ano}_AM.csv"
+        cache = CACHE / nome_csv
+        if not cache.exists() or ano == date.today().year:
+            try:
+                z = zipfile.ZipFile(ArquivoRemoto(f"{base}/prestacao_de_contas_eleitorais_candidatos_{ano}.zip"))
+                cache.parent.mkdir(parents=True, exist_ok=True)
+                cache.write_bytes(z.read(nome_csv))
+            except Exception as e:  # noqa: BLE001
+                log(f"[doacoes] {ano}: {e}")
+                if not cache.exists():
+                    continue
+        cand = {}
+        for x in ler_cache_csv(f"consulta_cand_{ano}_AM.csv"):
+            nasc = x.get("DT_NASCIMENTO") or ""
+            cand[x["SQ_CANDIDATO"]] = (chave_pessoa(x["NM_CANDIDATO"], "" if nasc.startswith("#") else nasc),
+                                       x.get("NM_URNA_CANDIDATO") or x["NM_CANDIDATO"], titulo(x.get("NM_UE") or ""))
+        campanhas: dict = {}
+        for r in ler_cache_csv(nome_csv):
+            sq = r.get("SQ_CANDIDATO")
+            if sq not in cand:
+                continue
+            pid, urna, ue = cand[sq]
+            v = valor(r.get("VR_RECEITA"))
+            if not v:
+                continue
+            # Erros de digitação no TSE (ex.: vereadores de Anamã em 2020 com R$ 207 milhões cada)
+            if v > 30_000_000 or (v > 1_000_000 and (r.get("DS_CARGO") or "").startswith("Vereador")):
+                log(f"[doacoes] {ano}: receita ignorada, valor impossível: {r.get('NM_CANDIDATO')} R$ {v:,.0f}")
+                continue
+            if "aplica" in (r.get("DS_ORIGEM_RECEITA") or "").lower():
+                continue  # rendimento de aplicação financeira não é doação
+            k = campanhas.setdefault(sq, {"pid": pid, "nome": titulo(urna), "ue": ue, "cargo": titulo(r.get("DS_CARGO") or ""),
+                                          "partido": r.get("SG_PARTIDO") or "", "total": 0.0, "estimado": 0.0,
+                                          "fontes": Counter(), "origens": Counter(), "doadores": {}})
+            k["total"] += v
+            if (r.get("DS_NATUREZA_RECEITA") or "").upper().startswith("ESTIM"):
+                k["estimado"] += v
+            fonte = (r.get("DS_FONTE_RECEITA") or "").upper()
+            k["fontes"]["Fundo Eleitoral (público)" if "ESPECIAL" in fonte else "Fundo Partidário (público)" if "PARTID" in fonte else "Outros recursos"] += v
+            nome, origem = nome_doador(r)
+            k["origens"][origem] += v
+            doc = re.sub(r"\D", "", r.get("NR_CPF_CNPJ_DOADOR") or "") or nome
+            d = k["doadores"].setdefault(doc, [nome, origem, 0.0])
+            d[2] += v
+            if "próprios" in origem.lower() or "proprios" in sem_acento(origem):
+                continue
+            g = doadores.setdefault(doc, {"nome": nome, "tipo": origem, "total": 0.0, "candidatos": {}, "anos": set()})
+            g["total"] += v
+            g["anos"].add(ano)
+            g["candidatos"][pid] = g["candidatos"].get(pid, [urna and titulo(urna), ano, 0.0])
+            g["candidatos"][pid][2] += v
+        for k in campanhas.values():
+            publico = k["fontes"]["Fundo Eleitoral (público)"] + k["fontes"]["Fundo Partidário (público)"]
+            proprio = sum(vv for o, vv in k["origens"].items() if "próprios" in o.lower())
+            por_pessoa[k["pid"]][str(ano)] = {
+                "cargo": k["cargo"], "ue": k["ue"], "partido": k["partido"], "total": round(k["total"], 2),
+                "estimado": round(k["estimado"], 2), "publico": round(publico, 2), "proprio": round(proprio, 2),
+                "fontes": {a: round(b, 2) for a, b in k["fontes"].most_common()},
+                "origens": {a: round(b, 2) for a, b in k["origens"].most_common()},
+                "doadores": [[n, o, round(vv, 2)] for n, o, vv in sorted(k["doadores"].values(), key=lambda d: -d[2])[:15]],
+            }
+            candidatos.append([k["pid"], k["nome"], ano, k["cargo"], k["ue"], k["partido"], round(k["total"], 2), round(publico, 2), round(proprio, 2)])
+        log(f"[doacoes] {ano}: {len(campanhas)} campanhas")
+    partes = defaultdict(dict)
+    for pid, anos in por_pessoa.items():
+        partes[pid[4:6]][pid] = anos
+    pasta = DADOS / "doacoes"
+    pasta.mkdir(parents=True, exist_ok=True)
+    for p in pasta.glob("*.json"):
+        p.unlink()
+    for k, v in partes.items():
+        salvar(f"doacoes/{k}.json", v)
+    lista = sorted(doadores.values(), key=lambda g: -g["total"])[:400]
+    salvar("doadores.json", {
+        "doadores": [{"nome": g["nome"], "tipo": g["tipo"], "total": round(g["total"], 2), "anos": sorted(g["anos"]),
+                      "n": len(g["candidatos"]),
+                      "candidatos": [[pid, n, a, round(vv, 2)] for pid, (n, a, vv) in sorted(g["candidatos"].items(), key=lambda i: -i[1][2])[:8]]}
+                     for g in lista],
+        "candidatos": sorted(candidatos, key=lambda x: -x[6])[:600],
+    })
+    log(f"[doacoes] {len(por_pessoa)} pessoas, {len(doadores)} doadores")
+    return {"pessoas": len(por_pessoa), "doadores": len(doadores)}
+
+
 def ligar_pessoas(politicos: list[dict]) -> None:
     """Liga cada político em exercício à sua pessoa no histórico do TSE (nome civil + nascimento, ou nome de urna)."""
     pasta = DADOS / "pessoas"
@@ -1555,11 +1698,12 @@ FONTES_INFO = {
     "presenca": ("Câmara Municipal de Manaus e ALEAM — Presença em sessões (SAPL)", "https://sapl.al.am.leg.br/sessao/pesquisar-sessao"),
     "senado_atividade": ("Senado Federal — Votações nominais e cota (CEAPS)", "https://adm.senado.gov.br/adm-dadosabertos"),
     "tse_historico": ("TSE — Candidaturas, bens, votos e fotos do Amazonas desde 2000", "https://dadosabertos.tse.jus.br"),
+    "doacoes": ("TSE — Prestação de contas: quem financiou as campanhas (2018 em diante)", "https://dadosabertos.tse.jus.br/dataset/?q=prestacao+de+contas"),
     "tribunais": ("DadosJusBr — Remuneração de membros do sistema de Justiça", "https://dadosjusbr.org"),
     "diarios": ("Diários oficiais: ALEAM, Câmara Municipal de Manaus e Estado do Amazonas", "https://diario.imprensaoficial.am.gov.br"),
 }
 # Fontes pesadas que só rodam quando pedidas pelo nome
-SOB_DEMANDA = {"eleicoes", "tse_historico"}
+SOB_DEMANDA = {"eleicoes", "tse_historico", "doacoes"}
 
 
 def main() -> int:
@@ -1578,6 +1722,7 @@ def main() -> int:
         "senado_atividade": coletar_senado_atividade,  # depende de senado
         "tribunais": coletar_tribunais,
         "tse_historico": coletar_tse_historico,  # sob demanda, lê os arquivos do TSE em .cache
+        "doacoes": coletar_doacoes,  # sob demanda, depois do histórico
         "eleicoes": coletar_eleicoes,  # sob demanda
     }
     meta_ant = ler("meta.json", {}) or {}

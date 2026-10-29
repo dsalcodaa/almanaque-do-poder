@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="pt-BR" data-root="">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Financiamento de campanhas · Almanaque do Poder</title>
+  <meta name="description" content="Quem financiou as campanhas eleitorais no Amazonas desde 2018: maiores doadores, partidos e candidatos que mais arrecadaram.">
+  <meta name="author" content="NEX — Hub de Análise Estratégica">
+  <meta name="creator" content="NEX — Hub de Análise Estratégica">
+  <meta name="publisher" content="NEX — Hub de Análise Estratégica">
+  <meta name="application-name" content="Almanaque do Poder">
+  <meta name="theme-color" content="#f1ece4">
+  <meta property="og:site_name" content="Almanaque do Poder">
+  <meta property="og:title" content="Financiamento de campanhas · Almanaque do Poder">
+  <meta property="og:locale" content="pt_BR">
+  <link rel="author" href="humans.txt">
+  <link rel="icon" type="image/png" href="assets/img/favicon.png">
+  <meta property="og:image" content="assets/img/logo-almanaque.jpg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Source+Serif+4:opsz,wght@8..60,600;8..60,700&display=swap">
+  <link rel="stylesheet" href="assets/css/style.css">
+  <link rel="stylesheet" href="assets/css/print.css">
+</head>
+<body data-page="campanhas">
+  <a class="skip" href="#conteudo">Pular para o conteúdo</a>
+
+  <div class="wrap">
+    <header class="masthead">
+      <a class="masthead__brand" href="index.html"><img class="masthead__logo" src="assets/img/logo-icone.png" alt="" width="40" height="40"><span>Almanaque do Poder</span></a>
+      <nav class="masthead__nav" aria-label="Principal">
+        <a href="index.html">Início</a>
+        <a href="politicos.html">Políticos</a>
+        <a href="municipio.html">Municípios</a>
+        <a href="leis.html">Leis e projetos</a>
+        <a href="rankings.html">Rankings</a>
+        <a href="gastos.html">Gastos</a>
+        <a href="campanhas.html" aria-current="page">Campanhas</a>
+        <a href="comparar.html">Comparar</a>
+        <a href="diario.html">Diário Oficial</a>
+        <a href="tribunais.html">Tribunais</a>
+        <a href="sobre.html">Sobre o projeto</a>
+      </nav>
+    </header>
+
+    <main id="conteudo">
+      <section class="hero">
+        <p class="kicker">Financiamento de campanha</p>
+        <h1 class="display">Quem paga as campanhas</h1>
+        <p class="lede">Os maiores financiadores das eleições no Amazonas desde 2018 e os candidatos que mais arrecadaram, com quanto veio de dinheiro público.</p>
+      </section>
+      <section class="section">
+        <p class="kicker">Financiadores</p>
+        <h2 class="h2">Quem mais doou</h2>
+        <form class="filtros" onsubmit="return false">
+          <label><span>Tipo</span><select id="f-tipo"><option value="">Todos</option></select></label>
+          <label><span>Buscar</span><input id="f-busca" type="search" placeholder="Financiador ou candidato" autocomplete="off"></label>
+        </form>
+        <div id="doadores"><p class="muted">Carregando…</p></div>
+        <p class="muted">Partidos repassam o dinheiro dos fundos públicos (eleitoral e partidário) aos candidatos. O dinheiro que o candidato põe na própria campanha não entra nesta lista. Documentos (CPF e CNPJ) dos doadores não são publicados aqui.</p>
+      </section>
+      <section class="section">
+        <p class="kicker">Candidatos</p>
+        <h2 class="h2">Quem mais arrecadou</h2>
+        <form class="filtros" onsubmit="return false">
+          <label><span>Ano</span><select id="c-ano"><option value="">Todos</option></select></label>
+          <label><span>Cargo</span><select id="c-cargo"><option value="">Todos</option></select></label>
+          <label><span>Município</span><select id="c-mun"><option value="">Todos</option></select></label>
+        </form>
+        <div id="candidatos"></div>
+        <p class="muted">Fonte: TSE, prestação de contas final dos candidatos. Desde 2015, empresas não podem doar para campanhas.</p>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <p>Almanaque do Poder · Desenvolvido pela <a href="sobre.html#nex"><strong>NEX — Hub de Análise Estratégica</strong></a>.</p>
+      <p><span data-atualizado></span> <a href="sobre.html#fontes">Fontes</a></p>
+    </footer>
+  </div>
+
+  <script src="assets/js/app.js" defer></script>
+  <script src="assets/js/nex-brand.js" defer></script>
+</body>
+</html>

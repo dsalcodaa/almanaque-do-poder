@@ -98,6 +98,25 @@
     if (Object.keys(pat).length > 1) h += '<h3 class="eleitos__cargo" style="margin-top: var(--space-4);">Patrimônio declarado a cada eleição</h3>' + colunas(pat, reais);
     return h + '<p class="muted">Fonte: TSE, candidaturas, bens e votação nominal (2000 em diante; bens a partir de 2006). "—" indica dado não publicado pelo TSE.</p></section>';
   }
+  function doacoesHTML(d) {
+    var anos = Object.keys(d || {}).sort().reverse();
+    if (!anos.length) return '<section class="section"><p class="kicker">Financiamento de campanha</p><h2 class="h2">Quem pagou as campanhas</h2>' +
+      '<p class="prose">Não há prestação de contas no TSE para as campanhas desta pessoa de 2018 em diante. Eleições anteriores a 2018 ainda não foram incluídas, e há candidatos que não declararam receitas.</p></section>';
+    return '<section class="section"><p class="kicker">Financiamento de campanha</p><h2 class="h2">Quem pagou as campanhas</h2>' + anos.map(function (a) {
+      var x = d[a];
+      return '<h3 class="eleitos__cargo" style="margin-top: var(--space-4);">' + a + " · " + esc(x.cargo) + (x.ue && x.ue !== "Amazonas" ? " em " + esc(x.ue) : "") + " · " + esc(x.partido) + "</h3>" +
+        '<ul class="pillars"><li class="pillar"><span class="pillar__index pillar__index--valor">' + reais(x.total) + '</span><p class="pillar__text">arrecadados na campanha</p></li>' +
+        '<li class="pillar"><span class="pillar__index pillar__index--accent">' + pct(x.publico, x.total) + '</span><p class="pillar__text">dinheiro público (fundo eleitoral e fundo partidário)</p></li>' +
+        '<li class="pillar"><span class="pillar__index">' + pct(x.proprio, x.total) + '</span><p class="pillar__text">do próprio bolso do candidato</p></li></ul>' +
+        barras(x.origens, reais) +
+        '<div class="tabela-wrap"><table class="tabela"><thead><tr><th>Maiores financiadores</th><th>Tipo</th><th class="num">Valor</th></tr></thead><tbody>' +
+        x.doadores.map(function (r) { return "<tr><td>" + esc(r[0]) + "</td><td>" + esc(r[1]) + '</td><td class="num">' + reais(r[2]) + "</td></tr>"; }).join("") + "</tbody></table></div>" +
+        (x.estimado ? '<p class="muted">' + reais(x.estimado) + " foram doações estimadas (serviços ou bens cedidos, sem dinheiro).</p>" : "");
+    }).join("") + '<p class="muted">Fonte: TSE, prestação de contas final dos candidatos (2018 em diante). Desde 2015, empresas não podem doar para campanhas.</p></section>';
+  }
+  function carregarDoacoes(id) {
+    return carregar("doacoes/" + id.slice(4, 6) + ".json").then(function (x) { return x[id]; }).catch(function () { return null; });
+  }
   function slugJS(s) { return semAcento(s).replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, ""); }
   function param(nome) {
     return new URLSearchParams(location.search).get(nome);
@@ -313,12 +332,14 @@
       if (pe.ocupacao || pe.instrucao) cr.push([esc(pe.ocupacao || "—"), esc(pe.instrucao || "")]);
       h += '<section class="section cracha"><ul class="cracha__lista">' + cr.map(function (c) { return '<li><span class="cracha__n">' + c[0] + '</span><span class="cracha__t">' + c[1] + "</span></li>"; }).join("") + "</ul></section>";
       h += historicoHTML(pe);
+      h += '<div id="doacoes"></div>';
       h += '<section class="section"><p class="kicker">Mandato</p><h2 class="h2">Votações, presença e gastos</h2><p class="prose">' +
         (ganhas.length
           ? "Não há registros de votações, presença ou gastos para este nome no site. Esses dados só existem a partir de 2023 e só para quem exerceu mandato na Câmara Municipal de Manaus, na Assembleia Legislativa, na Câmara dos Deputados ou no Senado. Câmaras dos outros municípios não publicam esses dados em formato aberto. Mandatos anteriores a 2023 ainda não foram incluídos."
           : "Sem mandato conquistado nas eleições registradas pelo TSE, por isso não há votações, presença ou gastos de gabinete.") +
         '</p><p><a href="gastos.html">Pesquisar o nome nos gastos de gabinete</a> · <a href="diario.html">Buscar no Diário Oficial</a></p></section>';
       alvo.innerHTML = h;
+      carregarDoacoes(id).then(function (d) { var box = $("#doacoes"); if (box) box.outerHTML = doacoesHTML(d); });
     }).catch(function (e) { erro(alvo, e); });
   }
 
@@ -338,6 +359,7 @@
             var box = $("#historico");
             if (box && parte[p.pessoa]) box.outerHTML = historicoHTML(parte[p.pessoa]);
           }).catch(function () {});
+          carregarDoacoes(p.pessoa).then(function (d) { var box = $("#doacoes"); if (box) box.outerHTML = doacoesHTML(d); });
         }, 0);
       }
       var m = p.metricas;
@@ -457,7 +479,7 @@
           '<p><a href="diario.html?politico=' + encodeURIComponent(p.id) + '">Ver todas as citações</a></p></section>';
       }
 
-      if (p.pessoa) h += '<div id="historico"></div>';
+      if (p.pessoa) h += '<div id="historico"></div><div id="doacoes"></div>';
 
       var em = p.emendas;
       if (em) {
@@ -941,6 +963,41 @@
     }).catch(function (e) { erro(alvo, e); });
   }
 
+  // ---------- financiamento de campanhas ----------
+  function paginaCampanhas() {
+    var alvoD = $("#doadores"), alvoC = $("#candidatos"), fTipo = $("#f-tipo"), fBusca = $("#f-busca"), fAno = $("#c-ano"), fCargo = $("#c-cargo"), fMun = $("#c-mun");
+    carregar("doadores.json").then(function (dd) {
+      var tipos = Array.from(new Set(dd.doadores.map(function (g) { return g.tipo; }))).sort();
+      tipos.forEach(function (t) { fTipo.insertAdjacentHTML("beforeend", '<option value="' + esc(t) + '">' + esc(t) + "</option>"); });
+      var unicos = function (i) { return Array.from(new Set(dd.candidatos.map(function (r) { return r[i]; }))).sort(function (a, b) { return String(a).localeCompare(String(b), "pt"); }); };
+      unicos(2).reverse().forEach(function (a) { fAno.insertAdjacentHTML("beforeend", '<option value="' + a + '">' + a + "</option>"); });
+      unicos(3).forEach(function (a) { fCargo.insertAdjacentHTML("beforeend", '<option value="' + esc(a) + '">' + esc(a) + "</option>"); });
+      unicos(4).forEach(function (a) { fMun.insertAdjacentHTML("beforeend", '<option value="' + esc(a) + '">' + esc(a) + "</option>"); });
+      function renderD() {
+        var t = fTipo.value, q = semAcento(fBusca.value.trim());
+        var f = dd.doadores.filter(function (g) { return (!t || g.tipo === t) && (!q || semAcento(g.nome + " " + g.candidatos.map(function (c) { return c[1]; }).join(" ")).indexOf(q) >= 0); });
+        alvoD.innerHTML = '<div class="tabela-wrap"><table class="tabela"><thead><tr><th>Financiador</th><th>Tipo</th><th class="num">Total doado</th><th class="num">Candidatos</th><th>Principais beneficiados</th></tr></thead><tbody>' +
+          f.slice(0, 100).map(function (g) {
+            return "<tr><td><strong>" + esc(g.nome) + '</strong><span class="ledger__sub">' + g.anos.join(", ") + "</span></td><td>" + esc(g.tipo) + '</td><td class="num">' + reais(g.total) + '</td><td class="num">' + num(g.n) + "</td><td>" +
+              g.candidatos.slice(0, 4).map(function (c) { return '<a href="politico.html?id=' + encodeURIComponent(c[0]) + '">' + esc(c[1]) + "</a> " + '<span class="muted">' + c[2] + ", " + reais(c[3]) + "</span>"; }).join("<br>") + "</td></tr>";
+          }).join("") + "</tbody></table></div>" + (f.length ? "" : '<p class="muted">Nenhum financiador com esses filtros.</p>');
+      }
+      function renderC() {
+        var a = fAno.value, cg = fCargo.value, mu = fMun.value;
+        var f = dd.candidatos.filter(function (r) { return (!a || String(r[2]) === a) && (!cg || r[3] === cg) && (!mu || r[4] === mu); });
+        alvoC.innerHTML = '<div class="tabela-wrap"><table class="tabela"><thead><tr><th>Candidato</th><th>Eleição</th><th class="num">Arrecadado</th><th class="num">Dinheiro público</th><th class="num">Próprio bolso</th></tr></thead><tbody>' +
+          f.slice(0, 50).map(function (r) {
+            return '<tr><td><a href="politico.html?id=' + encodeURIComponent(r[0]) + '"><strong>' + esc(r[1]) + "</strong></a>" + '<span class="ledger__sub">' + esc(r[5]) + "</span></td><td>" + r[2] + " · " + esc(r[3]) + (r[4] !== "Amazonas" ? '<span class="ledger__sub">' + esc(r[4]) + "</span>" : "") +
+              '</td><td class="num">' + reais(r[6]) + '</td><td class="num">' + pct(r[7], r[6]) + '</td><td class="num">' + pct(r[8], r[6]) + "</td></tr>";
+          }).join("") + "</tbody></table></div>";
+      }
+      [fTipo].forEach(function (el) { el.addEventListener("change", renderD); });
+      fBusca.addEventListener("input", renderD);
+      [fAno, fCargo, fMun].forEach(function (el) { el.addEventListener("change", renderC); });
+      renderD(); renderC();
+    }).catch(function (e) { erro(alvoD, e); });
+  }
+
   // ---------- fontes (página sobre) ----------
   function paginaSobre() {
     var alvo = $("#fontes");
@@ -952,7 +1009,7 @@
     }).catch(function () {});
   }
 
-  var paginas = { inicio: paginaInicio, politicos: paginaPoliticos, politico: paginaPolitico, leis: paginaLeis, rankings: paginaRankings, sobre: paginaSobre, gastos: paginaGastos, comparar: paginaComparar, diario: paginaDiario, municipio: paginaMunicipio, tribunais: paginaTribunais };
+  var paginas = { inicio: paginaInicio, politicos: paginaPoliticos, politico: paginaPolitico, leis: paginaLeis, rankings: paginaRankings, sobre: paginaSobre, gastos: paginaGastos, comparar: paginaComparar, diario: paginaDiario, municipio: paginaMunicipio, tribunais: paginaTribunais, campanhas: paginaCampanhas };
   var atual = document.body.getAttribute("data-page");
   if (paginas[atual]) paginas[atual]();
   atualizacao();
