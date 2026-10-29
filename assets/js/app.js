@@ -95,24 +95,70 @@
           '</td><td class="num">' + (c.votos != null ? num(c.votos) : "—") + "</td><td>" + (c.eleito ? '<span class="tag tag--accent">' + esc(c.situacao) + "</span>" : esc(c.situacao || "—")) +
           '</td><td class="num">' + (c.patrimonio != null ? reais(c.patrimonio) : "—") + "</td></tr>";
       }).join("") + "</tbody></table></div>";
-    if (Object.keys(pat).length > 1) h += '<h3 class="eleitos__cargo" style="margin-top: var(--space-4);">Patrimônio declarado a cada eleição</h3>' + colunas(pat, reais);
+    if (Object.keys(pat).length > 1) h += '<h3 class="eleitos__cargo" style="margin-top: var(--space-4);">Evolução do patrimônio declarado</h3>' + linha(pat, reais, "Patrimônio declarado ao TSE em cada eleição");
     return h + '<p class="muted">Fonte: TSE, candidaturas, bens e votação nominal (2000 em diante; bens a partir de 2006). "—" indica dado não publicado pelo TSE.</p></section>';
   }
   function doacoesHTML(d) {
     var anos = Object.keys(d || {}).sort().reverse();
     if (!anos.length) return '<section class="section"><p class="kicker">Financiamento de campanha</p><h2 class="h2">Quem pagou as campanhas</h2>' +
       '<p class="prose">Não há prestação de contas no TSE para as campanhas desta pessoa de 2018 em diante. Eleições anteriores a 2018 ainda não foram incluídas, e há candidatos que não declararam receitas.</p></section>';
-    return '<section class="section"><p class="kicker">Financiamento de campanha</p><h2 class="h2">Quem pagou as campanhas</h2>' + anos.map(function (a) {
+    return '<section class="section"><p class="kicker">Financiamento de campanha</p><h2 class="h2">Quem pagou as campanhas e com o que gastaram</h2>' + anos.map(function (a) {
       var x = d[a];
-      return '<h3 class="eleitos__cargo" style="margin-top: var(--space-4);">' + a + " · " + esc(x.cargo) + (x.ue && x.ue !== "Amazonas" ? " em " + esc(x.ue) : "") + " · " + esc(x.partido) + "</h3>" +
-        '<ul class="pillars"><li class="pillar"><span class="pillar__index pillar__index--valor">' + reais(x.total) + '</span><p class="pillar__text">arrecadados na campanha</p></li>' +
+      return '<h3 class="eleitos__cargo" style="margin-top: var(--space-4);">' + a + (x.cargo ? " · " + esc(x.cargo) : "") + (x.ue && x.ue !== "Amazonas" ? " em " + esc(x.ue) : "") + (x.partido ? " · " + esc(x.partido) : "") + "</h3>" +
+        (!x.total ? "" : '<ul class="pillars"><li class="pillar"><span class="pillar__index pillar__index--valor">' + reais(x.total) + '</span><p class="pillar__text">arrecadados na campanha</p></li>' +
         '<li class="pillar"><span class="pillar__index pillar__index--accent">' + pct(x.publico, x.total) + '</span><p class="pillar__text">dinheiro público (fundo eleitoral e fundo partidário)</p></li>' +
         '<li class="pillar"><span class="pillar__index">' + pct(x.proprio, x.total) + '</span><p class="pillar__text">do próprio bolso do candidato</p></li></ul>' +
-        barras(x.origens, reais) +
+        barras(x.origens, reais, "barras--reais") +
         '<div class="tabela-wrap"><table class="tabela"><thead><tr><th>Maiores financiadores</th><th>Tipo</th><th class="num">Valor</th></tr></thead><tbody>' +
-        x.doadores.map(function (r) { return "<tr><td>" + esc(r[0]) + "</td><td>" + esc(r[1]) + '</td><td class="num">' + reais(r[2]) + "</td></tr>"; }).join("") + "</tbody></table></div>" +
-        (x.estimado ? '<p class="muted">' + reais(x.estimado) + " foram doações estimadas (serviços ou bens cedidos, sem dinheiro).</p>" : "");
+        x.doadores.map(function (r) { return "<tr><td>" + esc(r[0]) + "</td><td>" + esc(r[1]) + '</td><td class="num">' + reais(r[2]) + "</td></tr>"; }).join("") + "</tbody></table></div>") +
+        (x.estimado ? '<p class="muted">' + reais(x.estimado) + " foram doações estimadas (serviços ou bens cedidos, sem dinheiro).</p>" : "") +
+        (x.gastos ? '<h4 class="sub-graf">Com o que gastou: ' + reais(x.gasto_total) + " em despesas contratadas</h4>" + barras(x.gastos, reais, "barras--reais", 12) +
+          '<div class="tabela-wrap"><table class="tabela"><thead><tr><th>Maiores fornecedores da campanha</th><th>Tipo de gasto</th><th class="num">Valor</th></tr></thead><tbody>' +
+          x.fornecedores.map(function (r) { return "<tr><td>" + esc(r[0]) + "</td><td>" + esc(r[1]) + '</td><td class="num">' + reais(r[2]) + "</td></tr>"; }).join("") + "</tbody></table></div>" : "");
     }).join("") + '<p class="muted">Fonte: TSE, prestação de contas final dos candidatos (2018 em diante). Desde 2015, empresas não podem doar para campanhas.</p></section>';
+  }
+  function territorioHTML(t) {
+    var anos = Object.keys(t || {}).sort().reverse();
+    if (!anos.length) return "";
+    var h = '<section class="section" id="territorio-sec"><p class="kicker">Geografia do voto</p><h2 class="h2">Onde teve votos</h2>' +
+      '<form class="filtros" onsubmit="return false"><label><span>Eleição</span><select id="terr-ano">' + anos.map(function (a) { return '<option value="' + a + '">' + a + "</option>"; }).join("") + "</select></label></form><div id=\"terr-corpo\"></div>" +
+      '<p class="muted">Fonte: TSE, votação por município e zona (desde 2000) e por seção eleitoral, ligada ao bairro do local de votação (desde 2018). Votos do 1º turno.</p></section>';
+    return h;
+  }
+  function territorioRender(t) {
+    var sel = $("#terr-ano"), corpo = $("#terr-corpo");
+    if (!sel || !corpo) return;
+    function render() {
+      var e = t[sel.value], h = "";
+      var umMun = e.municipios.length === 1;
+      if (!umMun) {
+        var m = {};
+        e.municipios.forEach(function (r) { m[r[0]] = r[1]; });
+        h += '<h3 class="sub-graf">Votos por município (' + num(e.total) + " no total)</h3>" + barras(m, num, "barras--reais", 15);
+      }
+      if (e.bairros) {
+        var b = {};
+        e.bairros.forEach(function (r) { b[(umMun ? "" : r[0] + " · ") + r[1]] = r[2]; });
+        h += '<h3 class="sub-graf">Votos por bairro' + (umMun ? " em " + esc(e.municipios[0][0]) + " (" + num(e.total) + " no total)" : "") + "</h3>" + barras(b, num, "barras--reais", 15);
+      } else if (+sel.value < 2018) {
+        h += '<p class="muted">Votos por bairro só a partir de 2018.</p>';
+      }
+      if (umMun && !e.bairros) h += '<p class="prose">' + num(e.total) + " votos em " + esc(e.municipios[0][0]) + ".</p>";
+      corpo.innerHTML = h;
+    }
+    sel.addEventListener("change", render);
+    render();
+  }
+  function carregarTerritorio(id) {
+    return carregar("territorio/" + id.slice(4, 6) + ".json").then(function (x) { return x[id]; }).catch(function () { return null; });
+  }
+  function mostrarTerritorio(id) {
+    carregarTerritorio(id).then(function (t) {
+      var box = $("#territorio");
+      if (!box) return;
+      box.outerHTML = territorioHTML(t);
+      if (t) territorioRender(t);
+    });
   }
   function carregarDoacoes(id) {
     return carregar("doacoes/" + id.slice(4, 6) + ".json").then(function (x) { return x[id]; }).catch(function () { return null; });
@@ -169,6 +215,33 @@
       var rot = /^\d{4}-\d{2}$/.test(k) ? MES[+k.slice(5) - 1] + (k.slice(5) === "01" ? " " + k.slice(2, 4) : "") : k;
       return '<div class="colunas__c" title="' + esc(rot + ": " + fmt(obj[k])) + '"><span class="colunas__v">' + (fmt === reais ? "R$ " + reaisCurto(obj[k]) : fmt(obj[k])) + '</span><span class="colunas__b" style="height:' + Math.max((obj[k] / mx) * 100, 1) + '%"></span><span class="colunas__r">' + esc(rot) + "</span></div>";
     }).join("") + "</div>";
+  }
+  // Gráfico de linha (uma série): pontos de 8px com valor ao passar o mouse, rótulo direto no primeiro e no último.
+  function linha(obj, fmt, rotulo) {
+    var ks = Object.keys(obj || {}).sort();
+    if (ks.length < 2) return "";
+    var W = 640, H = 230, ml = 12, mr = 12, mt = 28, mb = 46;
+    var vs = ks.map(function (k) { return obj[k]; }), mx = Math.max.apply(null, vs) || 1;
+    var x = function (i) { return ml + (i * (W - ml - mr)) / (ks.length - 1); };
+    var y = function (v) { return mt + (1 - v / mx) * (H - mt - mb); };
+    var pts = ks.map(function (k, i) { return x(i).toFixed(1) + "," + y(obj[k]).toFixed(1); }).join(" ");
+    var curto = function (v) { return fmt === reais ? "R$ " + reaisCurto(v) : fmt(v); };
+    // rótulo abaixo do ponto quando o vizinho é mais alto, para não cruzar a linha
+    var abaixo = function (i) {
+      var viz = [ks[i - 1], ks[i + 1]].filter(Boolean).map(function (k) { return obj[k]; });
+      return Math.max.apply(null, viz) > obj[ks[i]];
+    };
+    var g = '<svg class="linha-graf" viewBox="0 0 ' + W + " " + H + '" role="img" aria-label="' + esc(rotulo || "Evolução") + '">' +
+      '<polyline class="linha-graf__l" points="' + pts + '"></polyline>' +
+      ks.map(function (k, i) {
+        var ponta = i === 0 || i === ks.length - 1;
+        return '<g class="linha-graf__p"><circle class="linha-graf__alvo" cx="' + x(i) + '" cy="' + y(obj[k]) + '" r="14"></circle>' +
+          '<circle class="linha-graf__m" cx="' + x(i) + '" cy="' + y(obj[k]) + '" r="4"></circle>' +
+          '<text class="linha-graf__v' + (ponta ? " linha-graf__v--fixo" : "") + '" x="' + x(i) + '" y="' + (abaixo(i) ? y(obj[k]) + 18 : y(obj[k]) - 10) + '" text-anchor="' + (i === 0 ? "start" : i === ks.length - 1 ? "end" : "middle") + '">' + esc(curto(obj[k])) + "</text>" +
+          "<title>" + esc(k + ": " + fmt(obj[k])) + "</title></g>" +
+          '<text class="linha-graf__x" x="' + x(i) + '" y="' + (H - 8) + '" text-anchor="' + (i === 0 ? "start" : i === ks.length - 1 ? "end" : "middle") + '">' + esc(k) + "</text>";
+      }).join("") + "</svg>";
+    return '<figure class="linha-fig">' + g + "</figure>";
   }
   function pctHomenagem(p) {
     var m = p.metricas;
@@ -332,7 +405,7 @@
       if (pe.ocupacao || pe.instrucao) cr.push([esc(pe.ocupacao || "—"), esc(pe.instrucao || "")]);
       h += '<section class="section cracha"><ul class="cracha__lista">' + cr.map(function (c) { return '<li><span class="cracha__n">' + c[0] + '</span><span class="cracha__t">' + c[1] + "</span></li>"; }).join("") + "</ul></section>";
       h += historicoHTML(pe);
-      h += '<div id="doacoes"></div>';
+      h += '<div id="territorio"></div><div id="doacoes"></div>';
       h += '<section class="section"><p class="kicker">Mandato</p><h2 class="h2">Votações, presença e gastos</h2><p class="prose">' +
         (ganhas.length
           ? "Não há registros de votações, presença ou gastos para este nome no site. Esses dados só existem a partir de 2023 e só para quem exerceu mandato na Câmara Municipal de Manaus, na Assembleia Legislativa, na Câmara dos Deputados ou no Senado. Câmaras dos outros municípios não publicam esses dados em formato aberto. Mandatos anteriores a 2023 ainda não foram incluídos."
@@ -340,6 +413,7 @@
         '</p><p><a href="gastos.html">Pesquisar o nome nos gastos de gabinete</a> · <a href="diario.html">Buscar no Diário Oficial</a></p></section>';
       alvo.innerHTML = h;
       carregarDoacoes(id).then(function (d) { var box = $("#doacoes"); if (box) box.outerHTML = doacoesHTML(d); });
+      mostrarTerritorio(id);
     }).catch(function (e) { erro(alvo, e); });
   }
 
@@ -360,6 +434,7 @@
             if (box && parte[p.pessoa]) box.outerHTML = historicoHTML(parte[p.pessoa]);
           }).catch(function () {});
           carregarDoacoes(p.pessoa).then(function (d) { var box = $("#doacoes"); if (box) box.outerHTML = doacoesHTML(d); });
+          mostrarTerritorio(p.pessoa);
         }, 0);
       }
       var m = p.metricas;
@@ -479,7 +554,7 @@
           '<p><a href="diario.html?politico=' + encodeURIComponent(p.id) + '">Ver todas as citações</a></p></section>';
       }
 
-      if (p.pessoa) h += '<div id="historico"></div><div id="doacoes"></div>';
+      if (p.pessoa) h += '<div id="historico"></div><div id="territorio"></div><div id="doacoes"></div>';
 
       var em = p.emendas;
       if (em) {

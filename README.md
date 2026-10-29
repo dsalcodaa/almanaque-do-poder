@@ -58,7 +58,8 @@ python -m http.server 8000
 | Histórico de todos os candidatos e municípios | TSE, candidaturas, bens, votação e fotos desde 2000 (`tse_historico`) |
 | Nome de fornecedores ocultos | BrasilAPI (base de CNPJ da Receita), cache em `data/fontes/cnpj.json` |
 | Financiamento de campanha | TSE, prestação de contas dos candidatos desde 2018 (`doacoes`; lê só o CSV do AM dentro do zip nacional) |
-| Tribunais e Ministério Público | DadosJusBr (TJAM, MPAM, TRT-11, TRE-AM); lista do TCE-AM no código |
+| Tribunais e Ministério Público | DadosJusBr (TJAM, MPAM, TRT-11, TRE-AM) e contracheques em PDF do TCE-AM; coleta semestral |
+| Votos por município e bairro | TSE: `votacao_candidato_munzona`, `votacao_secao` e locais de votação (`votos_territorio`) |
 
 Para atualizar os dados localmente:
 
@@ -67,7 +68,9 @@ python scripts/coletar.py            # todas as fontes (cerca de 12 minutos)
 python scripts/coletar.py cmm aleam  # só as fontes indicadas
 python scripts/coletar.py eleicoes   # votos e patrimônio (TSE, arquivos grandes; não roda no Actions)
 python scripts/coletar.py tse_historico  # histórico, fotos e municípios (TSE desde 2000; não roda no Actions)
-python scripts/coletar.py doacoes        # financiadores de campanha (TSE desde 2018; rode depois do histórico)
+python scripts/coletar.py doacoes        # financiadores e gastos de campanha (TSE desde 2018; rode depois do histórico)
+python scripts/coletar.py votos_territorio  # votos por município e bairro (TSE; baixa cerca de 500 MB na primeira vez)
+python scripts/coletar.py tribunais      # força a coleta dos tribunais (normalmente roda a cada seis meses)
 ```
 
 O GitHub Actions roda o coletor todo dia às 6h (horário de Manaus), salva os dados no repositório e publica o site.

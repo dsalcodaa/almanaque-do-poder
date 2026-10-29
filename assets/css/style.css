@@ -271,8 +271,8 @@ a:hover { color: var(--accent); }
 .barras__pos { font: 700 1rem var(--font-serif); color: var(--muted); }
 .barras__rot { font-size: var(--fs-small); text-decoration: none; overflow: hidden; text-overflow: ellipsis; }
 a.barras__rot:hover { color: var(--accent); }
-.barras__trilho { height: 0.65rem; background: var(--paper-deep); }
-.barras__barra { display: block; height: 100%; background: var(--ink); }
+.barras__trilho { height: 0.4rem; background: var(--paper-deep); border-radius: 0 2px 2px 0; }
+.barras__barra { display: block; height: 100%; background: var(--ink); border-radius: 0 2px 2px 0; }
 .barras__barra--accent { background: var(--accent); }
 .barras__v { text-align: right; font-weight: 600; font-variant-numeric: tabular-nums; }
 @media (max-width: 34rem) {
@@ -338,7 +338,7 @@ a.barras__rot:hover { color: var(--accent); }
   border-bottom: 1px solid var(--rule); overflow-x: auto;
 }
 .colunas__c { position: relative; flex: 1 0 1.1rem; height: 100%; display: flex; align-items: flex-end; }
-.colunas__b { display: block; width: 100%; background: var(--ink); }
+.colunas__b { display: block; width: 100%; max-width: 0.75rem; margin: 0 auto; background: var(--ink); border-radius: 2px 2px 0 0; }
 .colunas__c:hover .colunas__b { background: var(--accent); }
 .colunas__r { position: absolute; bottom: -1.3rem; left: 50%; transform: translateX(-50%); font-size: 0.625rem; color: var(--muted); white-space: nowrap; }
 .colunas__c:not(:nth-child(3n+1)) .colunas__r { visibility: hidden; }
@@ -367,8 +367,8 @@ a.barras__rot:hover { color: var(--accent); }
 .masthead__logo { width: 40px; height: 40px; flex: none; }
 
 /* ---------- Valores nas colunas mês a mês ---------- */
-.colunas { height: 14rem; padding-top: 0.25rem; }
-.colunas__c { flex-direction: column; justify-content: flex-end; }
+.colunas { height: 11rem; padding-top: 0.25rem; overflow-y: hidden; }
+.colunas__c { flex-direction: column; justify-content: flex-end; align-items: center; }
 .colunas__v {
   writing-mode: vertical-rl; transform: rotate(180deg);
   font-size: 0.625rem; line-height: 1; color: var(--ink-soft); white-space: nowrap;
@@ -411,3 +411,16 @@ a.barras__rot:hover { color: var(--accent); }
 .linha__lista { columns: 2 16rem; margin: 0.4rem 0 0; padding-left: 1rem; font-size: 0.875rem; }
 .linha summary { cursor: pointer; font-size: 0.8125rem; color: var(--muted); }
 @media (max-width: 40rem) { .linha__item { grid-template-columns: 1fr; } }
+
+/* ---------- Gráfico de linha ---------- */
+.linha-fig { margin: var(--space-2) 0 0; max-width: 46rem; }
+.linha-graf { display: block; width: 100%; height: auto; overflow: visible; }
+.linha-graf__base { stroke: var(--rule); stroke-width: 1; }
+.linha-graf__l { fill: none; stroke: var(--ink); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.linha-graf__m { fill: var(--ink); stroke: var(--paper); stroke-width: 2; }
+.linha-graf__alvo { fill: transparent; }
+.linha-graf__p:hover .linha-graf__m { fill: var(--accent); }
+.linha-graf__v { font: 600 12px var(--font-sans, Inter, sans-serif); fill: var(--ink); opacity: 0; }
+.linha-graf__v--fixo, .linha-graf__p:hover .linha-graf__v { opacity: 1; }
+.linha-graf__x { font: 11px var(--font-sans, Inter, sans-serif); fill: var(--muted); }
+.sub-graf { margin: var(--space-4) 0 0; font-size: var(--fs-small); font-weight: 700; letter-spacing: var(--tracking-caps); text-transform: uppercase; }

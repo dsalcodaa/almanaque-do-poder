@@ -52,6 +52,10 @@ def log(*a):
     print(*a, file=sys.stderr, flush=True)
 
 
+class Pular(Exception):
+    """A fonte não precisa rodar agora (ex.: coleta semestral ainda dentro do prazo)."""
+
+
 def baixar(url: str, timeout: int = 90, tentativas: int = 3) -> bytes:
     erro = None
     for i in range(tentativas):
@@ -1313,6 +1317,28 @@ def chave_pessoa(nome: str, nascimento: str) -> str:
     return "tse-" + hashlib.sha1(f"{sem_acento(nome).upper().strip()}|{nascimento}".encode()).hexdigest()[:10]
 
 
+_IDS_PESSOA: dict | None = None
+
+
+def id_pessoa(nome: str, nascimento: str) -> str:
+    """Identificador estável da pessoa entre eleições.
+
+    O TSE às vezes grafa o mesmo nome de formas diferentes ("ABDEL AZIZ" e "ABDELAZIZ").
+    Nome sem espaços nem pontuação, mais a data de nascimento, aponta para o id da primeira
+    candidatura encontrada desde 2000."""
+    global _IDS_PESSOA
+    if _IDS_PESSOA is None:
+        _IDS_PESSOA = {}
+        for ano in ANOS_TSE:
+            for x in ler_cache_csv(f"consulta_cand_{ano}_AM.csv"):
+                n = x.get("DT_NASCIMENTO") or ""
+                n = "" if n.startswith("#") else n
+                k = (re.sub(r"[^A-Z]", "", sem_acento(x["NM_CANDIDATO"]).upper()), n)
+                _IDS_PESSOA.setdefault(k, chave_pessoa(x["NM_CANDIDATO"], n))
+    k = (re.sub(r"[^A-Z]", "", sem_acento(nome).upper()), nascimento)
+    return _IDS_PESSOA.get(k) or chave_pessoa(nome, nascimento)
+
+
 def slug(s: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", sem_acento(s)).strip("-")
 
@@ -1341,7 +1367,7 @@ def coletar_tse_historico() -> dict:
             continue
         # O TSE usou grafias antigas de dois municípios em algumas eleições
         for x in cand:
-            x["NM_UE"] = {"BOA VISTA DE RAMOS": "BOA VISTA DO RAMOS", "NOVO AYRAO": "NOVO AIRÃO"}.get(x["NM_UE"], x["NM_UE"])
+            x["NM_UE"] = NOMES_UE.get(x["NM_UE"], x["NM_UE"])
         bens = Counter()
         for b in ler_cache_csv(f"bem_candidato_{ano}_AM.csv"):
             bens[b["SQ_CANDIDATO"]] += float((b.get("VR_BEM_CANDIDATO") or "0").replace(",", ".") or 0)
@@ -1364,7 +1390,7 @@ def coletar_tse_historico() -> dict:
             nasc = x.get("DT_NASCIMENTO") or ""
             if nasc.startswith("#"):
                 nasc = ""
-            pid = chave_pessoa(x["NM_CANDIDATO"], nasc)
+            pid = id_pessoa(x["NM_CANDIDATO"], nasc)
             v1, v2 = votos.get((sq, "1")), votos.get((sq, "2"))
             situacao = (x.get("DS_SIT_TOT_TURNO") or "").replace("#NULO#", "").strip()
             municipal = x["DS_CARGO"] in ("PREFEITO", "VICE-PREFEITO", "VEREADOR")
@@ -1482,6 +1508,21 @@ def nome_doador(r: dict) -> tuple[str, str]:
     return nome, "Recursos próprios" if origem == "Próprios" else origem
 
 
+NOMES_UE = {"BOA VISTA DE RAMOS": "BOA VISTA DO RAMOS", "NOVO AYRAO": "NOVO AIRÃO"}
+
+
+def mapa_sq(ano: int) -> tuple[dict, dict]:
+    """SQ_CANDIDATO -> (pessoa, nome de urna, local) e (UE, cargo, número) -> SQ, a partir de consulta_cand."""
+    por_sq, por_numero = {}, {}
+    for x in ler_cache_csv(f"consulta_cand_{ano}_AM.csv"):
+        nasc = x.get("DT_NASCIMENTO") or ""
+        ue = NOMES_UE.get(x.get("NM_UE") or "", x.get("NM_UE") or "")
+        por_sq[x["SQ_CANDIDATO"]] = (id_pessoa(x["NM_CANDIDATO"], "" if nasc.startswith("#") else nasc),
+                                     x.get("NM_URNA_CANDIDATO") or x["NM_CANDIDATO"], titulo(ue))
+        por_numero[(x.get("SG_UE"), x.get("CD_CARGO"), x.get("NR_CANDIDATO"))] = x["SQ_CANDIDATO"]
+    return por_sq, por_numero
+
+
 def coletar_doacoes() -> dict:
     """Quem financiou as campanhas no Amazonas, de 2018 em diante (prestação de contas do TSE).
 
@@ -1504,11 +1545,7 @@ def coletar_doacoes() -> dict:
                 log(f"[doacoes] {ano}: {e}")
                 if not cache.exists():
                     continue
-        cand = {}
-        for x in ler_cache_csv(f"consulta_cand_{ano}_AM.csv"):
-            nasc = x.get("DT_NASCIMENTO") or ""
-            cand[x["SQ_CANDIDATO"]] = (chave_pessoa(x["NM_CANDIDATO"], "" if nasc.startswith("#") else nasc),
-                                       x.get("NM_URNA_CANDIDATO") or x["NM_CANDIDATO"], titulo(x.get("NM_UE") or ""))
+        cand = mapa_sq(ano)[0]
         campanhas: dict = {}
         for r in ler_cache_csv(nome_csv):
             sq = r.get("SQ_CANDIDATO")
@@ -1555,7 +1592,42 @@ def coletar_doacoes() -> dict:
                 "doadores": [[n, o, round(vv, 2)] for n, o, vv in sorted(k["doadores"].values(), key=lambda d: -d[2])[:15]],
             }
             candidatos.append([k["pid"], k["nome"], ano, k["cargo"], k["ue"], k["partido"], round(k["total"], 2), round(publico, 2), round(proprio, 2)])
-        log(f"[doacoes] {ano}: {len(campanhas)} campanhas")
+        nome_desp = f"despesas_contratadas_candidatos_{ano}_AM.csv"
+        if not (CACHE / nome_desp).exists() or ano == date.today().year:
+            try:
+                z = zipfile.ZipFile(ArquivoRemoto(f"{base}/prestacao_de_contas_eleitorais_candidatos_{ano}.zip"))
+                (CACHE / nome_desp).write_bytes(z.read(nome_desp))
+            except Exception as e:  # noqa: BLE001
+                log(f"[doacoes] despesas {ano}: {e}")
+        gastos: dict = {}
+        for r in ler_cache_csv(nome_desp):
+            sq = r.get("SQ_CANDIDATO")
+            if sq not in cand:
+                continue
+            v = valor(r.get("VR_DESPESA_CONTRATADA"))
+            if not v or v > 30_000_000 or (v > 1_000_000 and (r.get("DS_CARGO") or "").startswith("Vereador")):
+                continue
+            g = gastos.setdefault(sq, {"total": 0.0, "tipos": Counter(), "fornecedores": {},
+                                       "cargo": titulo(r.get("DS_CARGO") or ""), "partido": r.get("SG_PARTIDO") or ""})
+            tipo = (r.get("DS_ORIGEM_DESPESA") or "").strip()
+            tipo = "Não especificado" if not tipo or tipo.startswith("#") else tipo
+            g["total"] += v
+            g["tipos"][tipo] += v
+            nome = r.get("NM_FORNECEDOR_RFB") or ""
+            if nome.startswith("#") or not nome.strip():
+                nome = r.get("NM_FORNECEDOR") or ""
+            nome = "Não informado" if nome.startswith("#") or not nome.strip() else titulo(nome.strip())
+            doc = re.sub(r"\D", "", r.get("NR_CPF_CNPJ_FORNECEDOR") or "") or nome
+            f = g["fornecedores"].setdefault(doc, [nome, tipo, 0.0])
+            f[2] += v
+        for sq, g in gastos.items():
+            pid = cand[sq][0]
+            e = por_pessoa[pid].setdefault(str(ano), {"cargo": g["cargo"], "ue": cand[sq][2], "partido": g["partido"],
+                                                     "total": 0, "estimado": 0, "publico": 0, "proprio": 0, "fontes": {}, "origens": {}, "doadores": []})
+            e["gasto_total"] = round(g["total"], 2)
+            e["gastos"] = {a: round(b, 2) for a, b in g["tipos"].most_common()}
+            e["fornecedores"] = [[n, t, round(v, 2)] for n, t, v in sorted(g["fornecedores"].values(), key=lambda f: -f[2])[:10]]
+        log(f"[doacoes] {ano}: {len(campanhas)} campanhas, {len(gastos)} com despesas")
     partes = defaultdict(dict)
     for pid, anos in por_pessoa.items():
         partes[pid[4:6]][pid] = anos
@@ -1575,6 +1647,127 @@ def coletar_doacoes() -> dict:
     })
     log(f"[doacoes] {len(por_pessoa)} pessoas, {len(doadores)} doadores")
     return {"pessoas": len(por_pessoa), "doadores": len(doadores)}
+
+
+def baixar_arquivo(url: str, destino: Path) -> Path:
+    """Baixa um arquivo grande direto para o disco."""
+    destino.parent.mkdir(parents=True, exist_ok=True)
+    tmp = destino.with_suffix(destino.suffix + ".parcial")
+    req = urllib.request.Request(url, headers={"User-Agent": UA})
+    with urllib.request.urlopen(req, timeout=600) as r, tmp.open("wb") as f:
+        shutil.copyfileobj(r, f, 1 << 20)
+    tmp.replace(destino)
+    return destino
+
+
+def locais_votacao(ano: int) -> dict:
+    """(município, zona, local) -> (município, bairro) dos locais de votação do AM."""
+    cache = CACHE / f"locais_votacao_{ano}_AM.csv"
+    if not cache.exists():
+        url = f"https://cdn.tse.jus.br/estatistica/sead/odsele/eleitorado_locais_votacao/eleitorado_local_votacao_{ano}.zip"
+        zp = None
+        remoto = zipfile.ZipFile(ArquivoRemoto(url))
+        so_am = [n for n in remoto.namelist() if n.upper().endswith("_AM.CSV")]
+        if so_am:  # alguns anos vêm divididos por estado: lê só o do AM
+            z = remoto
+        else:
+            zp = baixar_arquivo(url, CACHE / f"eleitorado_local_votacao_{ano}.zip")
+            z = zipfile.ZipFile(zp)
+        with z, cache.open("w", encoding="utf-8", newline="") as saida:
+            nome = so_am[0] if so_am else next(n for n in z.namelist() if n.lower().endswith(".csv"))
+            w = csv.writer(saida, delimiter=";")
+            w.writerow(["CD_MUNICIPIO", "NR_ZONA", "NR_LOCAL_VOTACAO", "NM_MUNICIPIO", "NM_BAIRRO"])
+            vistos = set()
+            fonte = io.StringIO(z.read(nome).decode("latin-1")) if so_am else io.TextIOWrapper(z.open(nome), encoding="latin-1")
+            for r in csv.DictReader(fonte, delimiter=";"):
+                if r.get("SG_UF") != "AM":
+                    continue
+                k = (r["CD_MUNICIPIO"], r["NR_ZONA"], r["NR_LOCAL_VOTACAO"])
+                if k not in vistos:
+                    vistos.add(k)
+                    w.writerow([*k, r.get("NM_MUNICIPIO", ""), r.get("NM_BAIRRO", "")])
+        if zp:
+            zp.unlink()
+    out = {}
+    with cache.open(encoding="utf-8", newline="") as f:
+        for r in csv.DictReader(f, delimiter=";"):
+            try:
+                k = (int(r["CD_MUNICIPIO"]), int(r["NR_ZONA"]), int(r["NR_LOCAL_VOTACAO"]))
+            except ValueError:
+                continue
+            mun = titulo(NOMES_UE.get(r["NM_MUNICIPIO"], r["NM_MUNICIPIO"]))
+            bairro = (r.get("NM_BAIRRO") or "").strip()
+            out[k] = (mun, titulo(bairro) if bairro and not bairro.startswith("#") else "Bairro não informado")
+    return out
+
+
+def votos_bairro(ano: int, por_sq: dict, por_numero: dict) -> dict:
+    """Votos de 1º turno de cada candidato por bairro, cruzando as seções com os locais de votação."""
+    locais = locais_votacao(ano)
+    zp = CACHE / f"votacao_secao_{ano}_AM.zip"
+    if not zp.exists():
+        baixar_arquivo(f"https://cdn.tse.jus.br/estatistica/sead/odsele/votacao_secao/votacao_secao_{ano}_AM.zip", zp)
+    res: dict = defaultdict(Counter)
+    with zipfile.ZipFile(zp) as z:
+        nome = next(n for n in z.namelist() if n.lower().endswith(".csv"))
+        for r in csv.DictReader(io.TextIOWrapper(z.open(nome), encoding="latin-1"), delimiter=";"):
+            if r.get("NR_TURNO") != "1":
+                continue
+            sq = r.get("SQ_CANDIDATO")
+            if sq not in por_sq:
+                sq = por_numero.get((r.get("SG_UE"), r.get("CD_CARGO"), r.get("NR_VOTAVEL")))
+                if not sq:
+                    continue
+            try:
+                k = (int(r["CD_MUNICIPIO"]), int(r["NR_ZONA"]), int(r["NR_LOCAL_VOTACAO"]))
+                qt = int(r.get("QT_VOTOS") or 0)
+            except (ValueError, KeyError):
+                continue
+            mun, bairro = locais.get(k, (titulo(r.get("NM_MUNICIPIO") or ""), "Bairro não informado"))
+            res[sq][(mun, bairro)] += qt
+    return res
+
+
+def coletar_votos_territorio() -> dict:
+    """Onde cada candidato teve votos: por município (desde 2000) e por bairro (desde 2018).
+
+    Usa votacao_candidato_munzona (já em .cache), votacao_secao e os locais de votação do TSE.
+    Rode à mão depois do histórico: python scripts/coletar.py votos_territorio"""
+    saida: dict = defaultdict(dict)
+    for ano in ANOS_TSE:
+        por_sq, por_numero = mapa_sq(ano)
+        if not por_sq:
+            continue
+        mun: dict = defaultdict(Counter)
+        for v in ler_cache_csv(f"votacao_candidato_munzona_{ano}_AM.csv"):
+            if v.get("NR_TURNO") == "1" and v.get("SQ_CANDIDATO") in por_sq:
+                nome = titulo(NOMES_UE.get(v.get("NM_MUNICIPIO") or "", v.get("NM_MUNICIPIO") or ""))
+                mun[v["SQ_CANDIDATO"]][nome] += int(v.get("QT_VOTOS_NOMINAIS") or 0)
+        bairros: dict = {}
+        if ano >= 2018:
+            try:
+                bairros = votos_bairro(ano, por_sq, por_numero)
+            except Exception as e:  # noqa: BLE001
+                log(f"[votos_territorio] bairros {ano}: {e}")
+        for sq, cont in mun.items():
+            total = sum(cont.values())
+            if not total:
+                continue
+            e = {"total": total, "municipios": [[k, v] for k, v in cont.most_common(20)]}
+            if bairros.get(sq):
+                e["bairros"] = [[m, b, v] for (m, b), v in bairros[sq].most_common(25)]
+            saida[por_sq[sq][0]][str(ano)] = e
+        log(f"[votos_territorio] {ano}: {len(mun)} candidatos, {len(bairros)} com bairros")
+    partes: dict = defaultdict(dict)
+    for pid, anos in saida.items():
+        partes[pid[4:6]][pid] = anos
+    pasta = DADOS / "territorio"
+    pasta.mkdir(parents=True, exist_ok=True)
+    for p in pasta.glob("*.json"):
+        p.unlink()
+    for k, v in partes.items():
+        salvar(f"territorio/{k}.json", v)
+    return {"pessoas": len(saida)}
 
 
 def ligar_pessoas(politicos: list[dict]) -> None:
@@ -1618,8 +1811,16 @@ TRIBUNAIS = {
 
 
 def coletar_tribunais() -> dict:
-    """Membros e remuneração mensal (últimos 12 meses publicados) de TJAM, MPAM, TRT11 e TRE-AM, pelo DadosJusBr."""
+    """Membros e remuneração mensal (últimos 12 meses publicados) de TJAM, MPAM, TRT11 e TRE-AM, pelo DadosJusBr,
+    e do TCE-AM, pelos contracheques em PDF do portal do tribunal.
+
+    Roda a cada seis meses na atualização diária. Para forçar: python scripts/coletar.py tribunais"""
     hoje = date.today()
+    anterior = ler("fontes/tribunais.json") or {}
+    if "tribunais" not in sys.argv[1:] and anterior.get("coletado_em"):
+        dias = (hoje - date.fromisoformat(anterior["coletado_em"])).days
+        if dias < 182:
+            raise Pular(f"coleta semestral; a última foi há {dias} dias")
     saida = {}
     for org, nome in TRIBUNAIS.items():
         membros, meses = {}, []
@@ -1670,16 +1871,155 @@ def coletar_tribunais() -> dict:
         saida[org] = {"nome": nome, "meses": sorted(meses), "membros": lista,
                       "fonte": f"https://dadosjusbr.org/orgao/{org}"}
         log(f"[tribunais] {org}: {len(lista)} membros, {len(meses)} meses")
-    saida["tceam"] = {
-        "nome": "Tribunal de Contas do Estado do Amazonas", "meses": [], "fonte": "https://transparencia-new.tceam.tc.br/contracheque_membros",
-        "nota": "O TCE-AM publica os contracheques de membros só em arquivos mensais, sem dados abertos; os valores não entram aqui.",
-        "membros": [{"nome": n, "cargo": cg, "lotacao": "", "meses": 0} for cg, nomes in (
-            ("Conselheiro", ["Ari Jorge Moutinho da Costa Júnior", "Érico Xavier Desterro e Silva", "Josué Cláudio de Souza Neto",
-                             "Júlio Assis Corrêa Pinheiro", "Mario Manoel Coelho de Mello", "Yara Amazônia Lins Rodrigues", "Luis Fabian Pereira Barbosa"]),
-            ("Conselheiro substituto", ["Mário José de Moraes Costa Filho", "Alípio Reis Firmo Filho", "Luiz Henrique Pereira Mendes",
-                                        "Alber Furtado de Oliveira Júnior"])) for n in nomes],
-    }
-    return {"tribunais": saida}
+    try:
+        saida["tceam"] = coletar_tceam()
+    except Exception as e:  # noqa: BLE001
+        log(f"[tribunais] tceam: {e}")
+        if (anterior.get("tribunais") or {}).get("tceam"):
+            saida["tceam"] = anterior["tribunais"]["tceam"]
+    return {"tribunais": saida, "coletado_em": hoje.isoformat()}
+
+
+TCE_PORTAL = "https://transparencia-new.tceam.tc.br/contracheque_membros"
+TCE_ACAO = "00d2f16bb04eea19db5b26e11259bb6dcecde22201"  # server action do Next.js que lista as pastas
+MESES_NOME = {n: i + 1 for i, n in enumerate(["JANEIRO", "FEVEREIRO", "MARCO", "ABRIL", "MAIO", "JUNHO", "JULHO",
+                                                "AGOSTO", "SETEMBRO", "OUTUBRO", "NOVEMBRO", "DEZEMBRO"])}
+
+
+def arvore_tceam() -> list:
+    """Lista de pastas e arquivos de contracheques do portal do TCE-AM.
+
+    O portal é um app Next.js: a lista vem de uma server action. Se o identificador mudar
+    depois de uma atualização do portal, procura o novo nos scripts da página."""
+    def chamar(acao):
+        req = urllib.request.Request(TCE_PORTAL, data=b"[]", headers={
+            "User-Agent": UA, "Accept": "text/x-component", "Content-Type": "text/plain;charset=UTF-8", "Next-Action": acao})
+        texto = urllib.request.urlopen(req, timeout=90).read().decode("utf-8")
+        for linha in texto.splitlines():
+            if linha.startswith("1:"):
+                return json.loads(linha[2:]).get("data") or []
+        return []
+
+    try:
+        dados = chamar(TCE_ACAO)
+        if dados:
+            return dados
+    except Exception:  # noqa: BLE001
+        pass
+    pagina = baixar(TCE_PORTAL).decode("utf-8", "replace")
+    for js in dict.fromkeys(re.findall(r'src="(/_next/static/chunks/[^"]+\\.js)"', pagina)):
+        corpo = baixar("https://transparencia-new.tceam.tc.br" + js).decode("utf-8", "replace")
+        for acao in dict.fromkeys(re.findall(r'"([0-9a-f]{40,42})"', corpo)):
+            try:
+                dados = chamar(acao)
+            except Exception:  # noqa: BLE001
+                continue
+            if dados:
+                return dados
+    raise RuntimeError("não achei a lista de contracheques no portal do TCE-AM")
+
+
+def ler_contracheque_tce(pdf: bytes) -> dict | None:
+    """Nome, cargo, totais e rubricas de um contracheque do TCE-AM (modelo único nacional)."""
+    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
+        f.write(pdf)
+        caminho = f.name
+    try:
+        if shutil.which("pdftotext"):
+            corrido = subprocess.run(["pdftotext", "-enc", "UTF-8", caminho, "-"], capture_output=True, timeout=120).stdout.decode("utf-8", "replace")
+            layout = subprocess.run(["pdftotext", "-layout", "-enc", "UTF-8", caminho, "-"], capture_output=True, timeout=120).stdout.decode("utf-8", "replace")
+        else:
+            corrido = layout = texto_pdf(pdf) or ""
+    finally:
+        Path(caminho).unlink(missing_ok=True)
+
+    def achar(rotulo):
+        m = re.search(rotulo + r":\s*R\$\s*([\d.]+,\d\d)", corrido)
+        return valor(m.group(1)) if m else None
+
+    bruto = achar("Total Bruto")
+    if bruto is None:
+        return None
+    nome = re.search(r"Nome do\(a\) Membro:\s*(.+?)(?:\s+Matr[ií]cula|\n)", corrido)
+    cargo = re.search(r"Cargo:\s*(.+)", corrido)
+    rubricas = Counter()
+    for linha in layout.splitlines():
+        m = re.match(r"\s*TRU-(\d+)\s+(.+?)\s{2,}([\d.]+,\d\d)\s*$", linha)
+        if m and m.group(1)[0] != "9" and valor(m.group(3)):
+            rubricas[m.group(2).strip()] += valor(m.group(3))
+    return {"nome": titulo(nome.group(1).strip()) if nome else "", "cargo_pdf": titulo(cargo.group(1).strip()) if cargo else "",
+            "bruto": bruto, "descontos": achar("Descontos") or 0.0, "liquido": achar("Total L[ií]quido") or 0.0,
+            "rubricas": dict(rubricas)}
+
+
+def coletar_tceam() -> dict:
+    """Contracheques de conselheiros, conselheiros substitutos e procuradores de contas do TCE-AM.
+
+    Cada PDF lido fica guardado em data/fontes/tce_contracheques.json, então só os meses novos são baixados."""
+    cache = ler("fontes/tce_contracheques.json") or {}
+    cargos = {"CONSELHEIRO": "Conselheiro", "CONSELHEIRO SUBSTITUTO": "Conselheiro substituto", "PROCURADOR": "Procurador de contas"}
+    arquivos = []
+
+    def andar(nos, caminho):
+        for n in nos:
+            if n.get("tipo") == "pasta":
+                andar(n.get("filhos") or [], caminho + [n["nome"]])
+            elif n.get("tipo") == "arquivo" and n.get("link"):
+                arquivos.append((caminho, n))
+
+    andar(arvore_tceam(), [])
+    novos = 0
+    for caminho, n in arquivos:
+        idm = re.search(r"/d/([\w-]+)", n["link"])
+        if not idm or len(caminho) < 2 or not caminho[0].isdigit():
+            continue
+        mes = MESES_NOME.get(sem_acento(caminho[1]).upper())
+        if not mes:
+            continue
+        chave = idm.group(1)
+        if chave not in cache:
+            try:
+                pdf = baixar(f"https://drive.google.com/uc?export=download&id={chave}", timeout=120)
+                dado = ler_contracheque_tce(pdf) if pdf[:4] == b"%PDF" else None
+            except Exception as e:  # noqa: BLE001
+                log(f"[tribunais] tceam: {n['nome']}: {e}")
+                continue
+            if not dado:
+                continue
+            cache[chave] = dado
+            novos += 1
+        cache[chave]["ref"] = f"{caminho[0]}-{mes:02d}"
+        cache[chave]["cargo"] = cargos.get(caminho[2].upper(), "") if len(caminho) > 2 else ""
+    salvar("fontes/tce_contracheques.json", cache)
+
+    membros, meses = {}, set()
+    for d in cache.values():
+        if not d.get("ref") or not d.get("nome"):
+            continue
+        meses.add(d["ref"])
+        x = membros.setdefault(sem_acento(d["nome"]).upper(), {
+            "nome": d["nome"], "cargo": d.get("cargo") or d.get("cargo_pdf") or "", "lotacao": d.get("cargo_pdf") or "",
+            "meses": 0, "bruto": 0.0, "liquido": 0.0, "diarias": 0.0, "maior_mes": 0.0, "maior_mes_ref": None, "rubricas": Counter()})
+        x["meses"] += 1
+        x["bruto"] += d["bruto"]
+        x["liquido"] += d["liquido"]
+        if d["bruto"] > x["maior_mes"]:
+            x["maior_mes"], x["maior_mes_ref"] = d["bruto"], d["ref"]
+        for k, v in d["rubricas"].items():
+            x["rubricas"][k] += v
+            if "diaria" in sem_acento(k):
+                x["diarias"] += v
+    lista = []
+    for x in membros.values():
+        x["rubricas"] = {k: round(v, 2) for k, v in x["rubricas"].most_common(6)}
+        for k in ("bruto", "liquido", "diarias", "maior_mes"):
+            x[k] = round(x[k], 2)
+        x["media_bruta"] = round(x["bruto"] / x["meses"], 2)
+        lista.append(x)
+    lista.sort(key=lambda x: -x["bruto"])
+    log(f"[tribunais] tceam: {len(lista)} membros, {len(meses)} meses ({novos} contracheques novos)")
+    return {"nome": "Tribunal de Contas do Estado do Amazonas", "meses": sorted(meses), "membros": lista, "fonte": TCE_PORTAL,
+            "nota": "O TCE-AM publica um contracheque em PDF por membro e por mês; o site lê cada arquivo. Inclui os procuradores do Ministério Público de Contas."}
 
 
 # ------------------------------------------------------------------ main
@@ -1699,11 +2039,12 @@ FONTES_INFO = {
     "senado_atividade": ("Senado Federal — Votações nominais e cota (CEAPS)", "https://adm.senado.gov.br/adm-dadosabertos"),
     "tse_historico": ("TSE — Candidaturas, bens, votos e fotos do Amazonas desde 2000", "https://dadosabertos.tse.jus.br"),
     "doacoes": ("TSE — Prestação de contas: quem financiou as campanhas (2018 em diante)", "https://dadosabertos.tse.jus.br/dataset/?q=prestacao+de+contas"),
-    "tribunais": ("DadosJusBr — Remuneração de membros do sistema de Justiça", "https://dadosjusbr.org"),
+    "votos_territorio": ("TSE — Votos por município e por bairro", "https://dadosabertos.tse.jus.br/dataset/?q=votacao+secao"),
+    "tribunais": ("DadosJusBr e TCE-AM — Remuneração de membros do sistema de Justiça (coleta semestral)", "https://dadosjusbr.org"),
     "diarios": ("Diários oficiais: ALEAM, Câmara Municipal de Manaus e Estado do Amazonas", "https://diario.imprensaoficial.am.gov.br"),
 }
 # Fontes pesadas que só rodam quando pedidas pelo nome
-SOB_DEMANDA = {"eleicoes", "tse_historico", "doacoes"}
+SOB_DEMANDA = {"eleicoes", "tse_historico", "doacoes", "votos_territorio"}
 
 
 def main() -> int:
@@ -1723,6 +2064,7 @@ def main() -> int:
         "tribunais": coletar_tribunais,
         "tse_historico": coletar_tse_historico,  # sob demanda, lê os arquivos do TSE em .cache
         "doacoes": coletar_doacoes,  # sob demanda, depois do histórico
+        "votos_territorio": coletar_votos_territorio,  # sob demanda, depois do histórico
         "eleicoes": coletar_eleicoes,  # sob demanda
     }
     meta_ant = ler("meta.json", {}) or {}
@@ -1738,6 +2080,8 @@ def main() -> int:
             nome, url = FONTES_INFO[chave]
             fontes_meta[chave] = {"id": chave, "nome": nome, "url": url, "atualizado_em": HOJE,
                                   "legislatura": resultado.get("legislatura")}
+        except Pular as e:
+            log(f"[{chave}] pulado: {e}")
         except Exception as e:  # noqa: BLE001
             falhas.append(chave)
             log(f"[{chave}] FALHOU: {e} — mantendo dados anteriores")
