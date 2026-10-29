@@ -40,6 +40,8 @@ jobs:
       - name: Coletar dados das fontes oficiais
         if: github.event_name == 'schedule' || inputs.coletar
         run: python scripts/coletar.py
+        env:
+          PORTAL_TRANSPARENCIA_KEY: ${{ secrets.PORTAL_TRANSPARENCIA_KEY }}
 
       - name: Salvar dados atualizados no repositório
         if: github.event_name == 'schedule' || inputs.coletar

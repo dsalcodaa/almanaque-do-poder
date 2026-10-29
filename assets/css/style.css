@@ -314,3 +314,9 @@ a.barras__rot:hover { color: var(--accent); }
   .filtros label:has(input) { flex-basis: 100%; }
   .ledger--normas li { grid-template-columns: 1fr; }
 }
+
+.barras--reais li { grid-template-columns: minmax(9rem, 16rem) 1fr 6.5rem; }
+.barras--rank { --v: 6.5rem; }
+.barras--rank li { grid-template-columns: 1.5rem minmax(9rem, 20rem) 1fr var(--v); }
+@media (max-width: 34rem) { .barras--reais li { grid-template-columns: 1fr 6rem; } .barras--rank li { grid-template-columns: 1.5rem 1fr 6rem; } }
+.pillar__index--valor { font-size: clamp(2rem, 1.4rem + 2.2vw, 3.25rem); white-space: nowrap; }

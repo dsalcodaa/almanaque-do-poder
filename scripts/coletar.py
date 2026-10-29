@@ -400,6 +400,85 @@ def coletar_senado() -> dict:
     return {"politicos": politicos, "normas": normas}
 
 
+# ------------------------------------------------ Portal da Transparência
+
+PORTAL = "https://api.portaldatransparencia.gov.br/api-de-dados"
+# Nome do autor como aparece no Portal, quando difere do nome parlamentar
+NOME_PORTAL = {"camara-220712": ["FAUSTO SANTOS JR.", "FAUSTO JR."]}
+
+
+def valor(s: str | None) -> float:
+    if not s:
+        return 0.0
+    return float(s.replace(".", "").replace(",", "."))
+
+
+def coletar_emendas() -> dict:
+    """Emendas parlamentares dos deputados federais e senadores do AM."""
+    import os
+
+    chave = os.environ.get("PORTAL_TRANSPARENCIA_KEY")
+    if not chave:
+        raise RuntimeError("variável PORTAL_TRANSPARENCIA_KEY não definida")
+    federais = [p for f in ("camara", "senado") for p in (ler(f"fontes/{f}.json") or {}).get("politicos", [])]
+    if not federais:
+        raise RuntimeError("rode antes as fontes camara e senado")
+
+    def portal(nome: str, ano: int, pagina: int):
+        q = urllib.parse.urlencode({"nomeAutor": nome, "ano": ano, "pagina": pagina})
+        req = urllib.request.Request(f"{PORTAL}/emendas?{q}", headers={"chave-api-dados": chave, "Accept": "application/json", "User-Agent": UA})
+        for i in range(4):
+            try:
+                with urllib.request.urlopen(req, timeout=60) as r:
+                    return json.load(r)
+            except urllib.error.HTTPError as e:
+                if e.code == 429:  # limite de requisições por minuto
+                    time.sleep(30)
+                    continue
+                raise
+            except Exception:  # noqa: BLE001
+                time.sleep(3 * (i + 1))
+        raise RuntimeError(f"Portal não respondeu para {nome} {ano}")
+
+    saida = {}
+    for p in federais:
+        nomes = NOME_PORTAL.get(p["id"]) or [sem_acento(p["nome"]).upper()]
+        nome = nomes[0]
+        itens, vistos = [], set()
+        for nome_busca in nomes:
+            for ano in range(2023, date.today().year + 1):
+                pagina = 1
+                while True:
+                    lote = portal(nome_busca, ano, pagina)
+                    time.sleep(0.8)  # fica abaixo do limite de 90 requisições por minuto
+                    # A busca do Portal é por trecho do nome: confere o nome exato
+                    for e in lote:
+                        if e.get("nomeAutor") in nomes and e.get("codigoEmenda") not in vistos:
+                            vistos.add(e.get("codigoEmenda"))
+                            itens.append(e)
+                    if len(lote) < 15:
+                        break
+                    pagina += 1
+        por_funcao, por_local, por_ano = Counter(), Counter(), Counter()
+        for e in itens:
+            pago = valor(e.get("valorPago")) + valor(e.get("valorRestoPago"))
+            por_funcao[e.get("funcao") or "Não informada"] += pago
+            por_local[e.get("localidadeDoGasto") or "Não informada"] += pago
+            por_ano[str(e["ano"])] += pago
+        saida[p["id"]] = {
+            "autor_portal": nome,
+            "quantidade": len(itens),
+            "empenhado": round(sum(valor(e.get("valorEmpenhado")) for e in itens), 2),
+            "pago": round(sum(valor(e.get("valorPago")) + valor(e.get("valorRestoPago")) for e in itens), 2),
+            "por_ano": {k: round(v, 2) for k, v in sorted(por_ano.items())},
+            "por_funcao": {k: round(v, 2) for k, v in por_funcao.most_common(10)},
+            "por_local": {k: round(v, 2) for k, v in por_local.most_common(10)},
+            "desde": "2023",
+        }
+        log(f"[emendas] {p['nome']}: {len(itens)} emendas")
+    return {"emendas": saida}
+
+
 # ------------------------------------------------------------------- TSE
 
 def tse_am(ano: int) -> list[dict]:
@@ -479,6 +558,7 @@ FONTES_INFO = {
     "camara": ("Câmara dos Deputados — Dados Abertos", "https://dadosabertos.camara.leg.br"),
     "senado": ("Senado Federal — Dados Abertos", "https://legis.senado.leg.br/dadosabertos"),
     "prefeituras": ("TSE — Candidaturas 2024 e ajustes com fonte", "https://dadosabertos.tse.jus.br"),
+    "emendas": ("Portal da Transparência — Emendas parlamentares", "https://portaldatransparencia.gov.br/emendas"),
 }
 
 
@@ -489,6 +569,7 @@ def main() -> int:
         "camara": coletar_camara,
         "senado": coletar_senado,
         "prefeituras": coletar_executivo,
+        "emendas": coletar_emendas,  # depende de camara e senado
     }
     meta_ant = ler("meta.json", {}) or {}
     fontes_meta = {f["id"]: f for f in meta_ant.get("fontes", [])}
@@ -517,9 +598,13 @@ def main() -> int:
     politicos, normas = [], []
     for chave in tarefas:
         dados = ler(f"fontes/{chave}.json")
-        if dados:
+        if dados and "politicos" in dados:
             politicos += dados["politicos"]
             normas += dados["normas"]
+    emendas = (ler("fontes/emendas.json") or {}).get("emendas", {})
+    for p in politicos:
+        if p["id"] in emendas:
+            p["emendas"] = emendas[p["id"]]
     normas.sort(key=lambda n: n.get("data") or "", reverse=True)
     executivo = json.loads((DADOS / "executivo-manual.json").read_text(encoding="utf-8"))
     salvar("politicos.json", politicos)

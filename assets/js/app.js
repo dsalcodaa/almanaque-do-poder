@@ -47,6 +47,12 @@
     var p = iso.slice(0, 7).split("-");
     return p[1] + "/" + p[0];
   }
+  function reais(v) {
+    if (v == null) return "—";
+    if (v >= 1e9) return "R$ " + (v / 1e9).toLocaleString("pt-BR", { maximumFractionDigits: 1 }) + " bi";
+    if (v >= 1e6) return "R$ " + (v / 1e6).toLocaleString("pt-BR", { maximumFractionDigits: 1 }) + " mi";
+    return "R$ " + Math.round(v).toLocaleString("pt-BR");
+  }
   function num(n) {
     return n == null ? "—" : Number(n).toLocaleString("pt-BR");
   }
@@ -220,6 +226,27 @@
         }
       }
 
+      var em = p.emendas;
+      if (em) {
+        h += '<section class="section"><p class="kicker">Emendas parlamentares</p><h2 class="h2">Dinheiro indicado ao orçamento</h2>' +
+          '<p class="muted">Desde ' + esc(em.desde) + ", segundo o Portal da Transparência.</p>" +
+          '<ul class="pillars" style="margin-top: var(--space-3);">' +
+          '<li class="pillar"><span class="pillar__index">' + num(em.quantidade) + '</span><p class="pillar__text">emendas com execução registrada</p></li>' +
+          '<li class="pillar"><span class="pillar__index pillar__index--valor">' + reais(em.empenhado) + '</span><p class="pillar__text">empenhado (reservado no orçamento)</p></li>' +
+          '<li class="pillar"><span class="pillar__index pillar__index--accent pillar__index--valor">' + reais(em.pago) + '</span><p class="pillar__text">efetivamente pago, incluindo restos a pagar</p></li></ul>';
+        [["Por área", em.por_funcao], ["Por destino", em.por_local], ["Pago por ano", em.por_ano]].forEach(function (g) {
+          var ks = Object.keys(g[1] || {}).filter(function (k) { return g[1][k] > 0; });
+          if (!ks.length) return;
+          var mx = Math.max.apply(null, ks.map(function (k) { return g[1][k]; })) || 1;
+          h += '<h3 class="eleitos__cargo" style="margin-top: var(--space-4);">' + esc(g[0]) + '</h3><ul class="barras barras--reais">';
+          ks.forEach(function (k) {
+            h += '<li><span class="barras__rot">' + esc(k === "MÚLTIPLO" ? "Vários destinos" : k) + '</span><span class="barras__trilho"><span class="barras__barra" style="width:' + (g[1][k] / mx) * 100 + '%"></span></span><span class="barras__v">' + reais(g[1][k]) + "</span></li>";
+          });
+          h += "</ul>";
+        });
+        h += '<p class="muted" style="margin-top: var(--space-2);"><a href="https://portaldatransparencia.gov.br/emendas/consulta?autor=' + encodeURIComponent(em.autor_portal) + '" target="_blank" rel="noopener">Ver no Portal da Transparência</a></p></section>';
+      }
+
       if (normas.length) {
         h += '<section class="section"><p class="kicker">As leis</p><h2 class="h2">Normas aprovadas</h2><ul class="ledger">';
         normas.slice(0, 30).forEach(function (n) {
@@ -311,6 +338,7 @@
         { titulo: "Mais homenagens aprovadas", kicker: "Homenagens", accent: true, val: function (p) { return p.metricas.homenagens; }, fmt: num, nota: "Títulos, datas comemorativas, denominações, honrarias e utilidade pública." },
         { titulo: "Maior parcela de homenagens", kicker: "Proporção", accent: true, val: function (p) { return p.metricas.normas >= 3 ? pctHomenagem(p) : null; }, fmt: function (v) { return Math.round(v * 100) + "%"; }, nota: "Entre quem aprovou pelo menos 3 normas." },
         { titulo: "Menor parcela de homenagens", kicker: "Proporção", inverso: true, val: function (p) { return p.metricas.normas >= 3 ? pctHomenagem(p) : null; }, fmt: function (v) { return Math.round(v * 100) + "%"; }, nota: "Entre quem aprovou pelo menos 3 normas." },
+        { titulo: "Mais emendas pagas", kicker: "Orçamento", val: function (p) { return p.emendas ? p.emendas.pago : null; }, fmt: reais, nota: "Deputados federais e senadores, desde 2023. Fonte: Portal da Transparência." },
         { titulo: "Mais proposições apresentadas", kicker: "Atividade", val: function (p) { return p.metricas.proposicoes; }, fmt: num, nota: "Inclui requerimentos e indicações no SAPL. Na Câmara dos Deputados conta PL, PLP, PEC e PDL, com coautoria." }
       ];
 
