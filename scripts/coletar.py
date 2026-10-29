@@ -28,7 +28,7 @@ import unicodedata
 import urllib.parse
 import urllib.request
 import zipfile
-from collections import Counter
+from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -550,6 +550,306 @@ def coletar_eleitos_2026() -> list[dict]:
     return saida
 
 
+# --------------------------------------------- Cota parlamentar (CEAP)
+
+def resumo_cota(notas: list[dict]) -> dict:
+    """Totais por categoria, mês e fornecedor de uma lista de notas."""
+    cat, mes, forn = Counter(), Counter(), Counter()
+    nome_forn = {}
+    for n in notas:
+        cat[n["categoria"]] += n["valor"]
+        mes[f"{n['ano']}-{int(n['mes']):02d}"] += n["valor"]
+        chave = n["cnpj"] or n["fornecedor"]
+        forn[chave] += n["valor"]
+        nome_forn[chave] = n["fornecedor"]
+    return {
+        "total": round(sum(n["valor"] for n in notas), 2),
+        "notas": len(notas),
+        "por_categoria": {k: round(v, 2) for k, v in cat.most_common()},
+        "por_mes": {k: round(v, 2) for k, v in sorted(mes.items())},
+        "fornecedores": [{"nome": nome_forn[k], "cnpj": k if k != nome_forn[k] else None, "valor": round(v, 2)} for k, v in forn.most_common(8)],
+    }
+
+
+def categoria_cota(texto: str) -> str:
+    t = sem_acento(texto)
+    regras = [
+        ("Combustíveis", r"combust|lubrific"),
+        ("Locação de veículos", r"loca.*veic|veicul"),
+        ("Divulgação", r"divulg"),
+        ("Consultoria e assessoria", r"consult|assess|pesquisa|trabalhos tecnicos"),
+        ("Passagens e fretamento aéreo", r"passag|aerea|aeronave|bilhete"),
+        ("Escritório e manutenção", r"escritorio|imovel|aluguel|locacao de imovel|manutencao|material|condominio|energia|agua"),
+        ("Telefonia e internet", r"telefon|internet|telecom"),
+        ("Alimentação e hospedagem", r"aliment|hosped|refei"),
+        ("Segurança", r"seguranca"),
+        ("Postais", r"postal|correio"),
+    ]
+    for nome, padrao in regras:
+        if re.search(padrao, t):
+            return nome
+    return titulo(texto.strip().rstrip(".")) or "Outros"
+
+
+CMM_AJAX = "https://www.cmm.am.gov.br/wp-admin/admin-ajax.php"
+
+
+def cmm_ajax(dados: dict):
+    corpo = urllib.parse.urlencode(dados).encode()
+    for i in range(3):
+        try:
+            req = urllib.request.Request(CMM_AJAX, data=corpo, headers={"User-Agent": UA, "Content-Type": "application/x-www-form-urlencoded"})
+            with urllib.request.urlopen(req, timeout=180) as r:
+                return json.load(r)
+        except Exception as e:  # noqa: BLE001
+            erro = e
+            time.sleep(5 * (i + 1))
+    raise RuntimeError(f"SIGAE não respondeu: {erro}")
+
+
+def coletar_ceap_cmm() -> dict:
+    """Cota parlamentar dos vereadores de Manaus (SIGAE da CMM), de 2023 em diante."""
+    vereadores = (ler("fontes/cmm.json") or {}).get("politicos", [])
+    por_nome = {sem_acento(p["nome_completo"]): p["id"] for p in vereadores if p.get("nome_completo")}
+    resumo, notas = {}, []
+    for ano in range(2023, date.today().year + 1):
+        lista = cmm_ajax({"action": "cmm_cotas_ceap_parlamentares", "ano": ano}).get("data") or []
+        log(f"[ceap_cmm] {ano}: {len(lista)} gabinetes")
+
+        def busca(p):
+            r = cmm_ajax({"action": "cmm_cotas_ceap_fetch", "ano": ano, "modo": "sigae",
+                          "mes_inicial": 1, "mes_final": 12, "parlamentar_id": p["id"]})
+            return p, (r.get("data") if r.get("success") else None)
+
+        with ThreadPoolExecutor(3) as ex:
+            for p, d in ex.map(busca, lista):
+                if not d:
+                    continue
+                pid = por_nome.get(sem_acento(p["nome"]))
+                fin = d.get("financeiro") or {}
+                minhas = []
+                for n in d.get("notas") or []:
+                    data = (n.get("data_emissao") or "")[:10]
+                    minhas.append({
+                        "casa": "cmm",
+                        "politico": pid,
+                        "politico_nome": titulo(p["nome"]),
+                        "ano": ano,
+                        "mes": int(data[5:7]) if data else 0,
+                        "data": data,
+                        "categoria": categoria_cota(n.get("item_despesa") or ""),
+                        "fornecedor": (n.get("nome_fantasia") or n.get("fornecedor") or "").strip(),
+                        "cnpj": n.get("cnpj") or None,
+                        "valor": float(n.get("valor") or 0),
+                        "documento": n.get("numero_documento"),
+                    })
+                notas += minhas
+                if pid:
+                    r = resumo_cota(minhas)
+                    r["cota_disponivel"] = fin.get("total_disponivel")
+                    r["cota_mensal"] = fin.get("cota_mensal")
+                    r["uso"] = round(r["total"] / fin["total_disponivel"], 4) if fin.get("total_disponivel") else None
+                    resumo.setdefault(pid, {})[str(ano)] = r
+    log(f"[ceap_cmm] {len(notas)} notas")
+    return {"cota": resumo, "notas": notas}
+
+
+def coletar_camara_atividade() -> dict:
+    """Cota, presença em sessões e votações dos deputados federais do AM (arquivos da Câmara)."""
+    deps = (ler("fontes/camara.json") or {}).get("politicos", [])
+    ids = {p["id"].split("-")[1]: p["id"] for p in deps}
+    partido = {p["id"]: p.get("partido") for p in deps}
+    nomes = {p["id"]: p["nome"] for p in deps}
+    arq = "https://dadosabertos.camara.leg.br/arquivos"
+
+    def csv_url(url, zipado=False):
+        b = baixar(url, timeout=600)
+        if zipado:
+            z = zipfile.ZipFile(io.BytesIO(b))
+            b = z.read(z.namelist()[0])
+        return list(csv.DictReader(io.StringIO(b.decode("utf-8-sig")), delimiter=";"))
+
+    resumo, notas = {}, []
+    presenca = {pid: {} for pid in ids.values()}
+    votos = {pid: [] for pid in ids.values()}
+    for ano in range(2023, date.today().year + 1):
+        # Cota parlamentar (CPF não é guardado)
+        for r in csv_url(f"https://www.camara.leg.br/cotas/Ano-{ano}.csv.zip", zipado=True):
+            pid = ids.get(r.get("ideCadastro"))
+            if not pid:
+                continue
+            valor_n = float((r.get("vlrLiquido") or "0").replace(",", ".") or 0)
+            notas.append({
+                "casa": "camara", "politico": pid, "politico_nome": nomes[pid], "ano": ano,
+                "mes": int(r.get("numMes") or 0), "data": (r.get("datEmissao") or "")[:10],
+                "categoria": categoria_cota(r.get("txtDescricao") or ""),
+                "fornecedor": (r.get("txtFornecedor") or "").strip(),
+                "cnpj": re.sub(r"\D", "", r.get("txtCNPJCPF") or "") or None if len(re.sub(r"\D", "", r.get("txtCNPJCPF") or "")) == 14 else None,
+                "valor": valor_n, "documento": r.get("txtNumero"),
+            })
+        log(f"[camara_atividade] cota {ano}")
+
+        # Presença em sessões deliberativas do Plenário
+        sessoes = {e["id"] for e in csv_url(f"{arq}/eventos/csv/eventos-{ano}.csv")
+                   if "sessao deliberativa" in sem_acento(e.get("descricaoTipo", "")) and "encerrada" in sem_acento(e.get("situacao", ""))}
+        presentes = Counter()
+        for e in csv_url(f"{arq}/eventosPresencaDeputados/csv/eventosPresencaDeputados-{ano}.csv"):
+            if e["idEvento"] in sessoes and e["idDeputado"] in ids:
+                presentes[ids[e["idDeputado"]]] += 1
+        for pid in presenca:
+            presenca[pid][str(ano)] = {"presente": presentes[pid], "sessoes": len(sessoes)}
+
+        # Votações nominais no Plenário. A orientação oficial vem por bloco com nome
+        # truncado ("Bl PlFdrPtUniPp..."), então a referência é a maioria do próprio
+        # partido naquela votação, sem contar o voto do deputado.
+        plen = {v["id"]: v for v in csv_url(f"{arq}/votacoes/csv/votacoes-{ano}.csv") if v.get("siglaOrgao") == "PLEN"}
+        placar = defaultdict(Counter)
+        meus = []
+        for v in csv_url(f"{arq}/votacoesVotos/csv/votacoesVotos-{ano}.csv"):
+            if v["idVotacao"] not in plen:
+                continue
+            sigla = (v.get("deputado_siglaPartido") or "").upper()
+            if v.get("voto") in ("Sim", "Não"):
+                placar[(v["idVotacao"], sigla)][v["voto"]] += 1
+            pid = ids.get(v.get("deputado_id"))
+            if pid:
+                meus.append((pid, sigla or (partido[pid] or "").upper(), v))
+        for pid, sigla, v in meus:
+            info = plen[v["idVotacao"]]
+            outros = Counter(placar[(v["idVotacao"], sigla)])
+            if v.get("voto") in ("Sim", "Não"):
+                outros[v["voto"]] -= 1
+            maioria = None
+            if outros["Sim"] + outros["Não"] >= 2 and outros["Sim"] != outros["Não"]:
+                maioria = "Sim" if outros["Sim"] > outros["Não"] else "Não"
+            votos[pid].append({
+                "id": v["idVotacao"], "data": (v.get("dataHoraVoto") or info.get("data") or "")[:10],
+                "voto": v.get("voto"), "partido": sigla, "maioria_partido": maioria,
+                "aprovada": info.get("aprovacao") == "1",
+                "descricao": re.sub(r"\s+", " ", info.get("descricao") or "")[:220],
+                "proposicao": info.get("ultimaApresentacaoProposicao_descricao") or None,
+            })
+        log(f"[camara_atividade] presença e votos {ano}")
+
+    for pid in ids.values():
+        minhas = [n for n in notas if n["politico"] == pid]
+        por_ano = {}
+        for ano in sorted({n["ano"] for n in minhas}):
+            por_ano[str(ano)] = resumo_cota([n for n in minhas if n["ano"] == ano])
+        vs = sorted(votos[pid], key=lambda x: x["data"], reverse=True)
+        com_orient = [x for x in vs if x["maioria_partido"] and x["voto"] in ("Sim", "Não")]
+        resumo[pid] = {
+            "cota": por_ano,
+            "presenca": presenca[pid],
+            "votos": {
+                "total": len(vs),
+                "sim": sum(1 for x in vs if x["voto"] == "Sim"),
+                "nao": sum(1 for x in vs if x["voto"] == "Não"),
+                "com_orientacao": len(com_orient),
+                "seguiu_partido": sum(1 for x in com_orient if x["voto"] == x["maioria_partido"]),
+                "recentes": vs[:40],
+            },
+        }
+    log(f"[camara_atividade] {len(notas)} notas de cota")
+    return {"atividade": resumo, "notas": notas}
+
+
+def coletar_eleicoes() -> dict:
+    """Votos e patrimônio declarado ao TSE, na eleição mais recente de cada político.
+
+    Arquivos grandes (até 600 MB). Rode à mão após cada eleição:
+        python scripts/coletar.py eleicoes
+    """
+    politicos = [p for f in ("cmm", "aleam", "camara", "senado", "prefeituras") for p in (ler(f"fontes/{f}.json") or {}).get("politicos", [])]
+    base = "https://cdn.tse.jus.br/estatistica/sead/odsele"
+
+    def arquivo_am(pasta: str, nome: str, ano: int) -> Path:
+        CACHE.mkdir(exist_ok=True)
+        destino = CACHE / f"{nome}_{ano}_AM.csv"
+        if not destino.exists():
+            log(f"[eleicoes] baixando {nome} {ano}")
+            tmp = CACHE / f"{nome}_{ano}.zip"
+            if not tmp.exists():
+                req = urllib.request.Request(f"{base}/{pasta}/{nome}_{ano}.zip", headers={"User-Agent": UA})
+                with urllib.request.urlopen(req, timeout=1800) as r, tmp.open("wb") as f:
+                    while True:
+                        bloco = r.read(1 << 20)
+                        if not bloco:
+                            break
+                        f.write(bloco)
+            with zipfile.ZipFile(tmp) as z:
+                membro = next(n for n in z.namelist() if n.endswith("_AM.csv"))
+                destino.write_bytes(z.read(membro))
+            tmp.unlink()
+        return destino
+
+    def ler_csv(p: Path):
+        with p.open(encoding="latin-1", newline="") as f:
+            yield from csv.DictReader(f, delimiter=";")
+
+    cargos_por_casa = {
+        "cmm": {2024: ["VEREADOR"]},
+        "prefeituras": {2024: ["PREFEITO", "VICE-PREFEITO"]},
+        "aleam": {2026: ["DEPUTADO ESTADUAL", "DEPUTADO FEDERAL", "SENADOR", "GOVERNADOR", "VICE-GOVERNADOR"], 2022: ["DEPUTADO ESTADUAL"]},
+        "camara": {2026: ["DEPUTADO FEDERAL", "SENADOR", "GOVERNADOR", "VICE-GOVERNADOR", "DEPUTADO ESTADUAL"], 2022: ["DEPUTADO FEDERAL"]},
+        "senado": {2026: ["SENADOR", "GOVERNADOR", "VICE-GOVERNADOR", "DEPUTADO FEDERAL"], 2022: ["SENADOR"]},
+        "governo": {2026: ["GOVERNADOR", "VICE-GOVERNADOR", "SENADOR", "DEPUTADO ESTADUAL", "DEPUTADO FEDERAL"], 2022: ["DEPUTADO ESTADUAL", "GOVERNADOR", "VICE-GOVERNADOR"], 2024: ["PREFEITO", "VICE-PREFEITO", "VEREADOR"]},
+    }
+    anos = sorted({a for c in cargos_por_casa.values() for a in c}, reverse=True)
+    cand, bens, votos = {}, Counter(), Counter()
+    for ano in anos:
+        cand[ano] = [x for x in tse_am(ano)]
+        try:
+            for b in ler_csv(arquivo_am("bem_candidato", "bem_candidato", ano)):
+                bens[(ano, b["SQ_CANDIDATO"])] += float((b.get("VR_BEM_CANDIDATO") or "0").replace(",", ".") or 0)
+        except Exception as e:  # noqa: BLE001
+            log(f"[eleicoes] bens {ano}: {e}")
+        try:
+            for v in ler_csv(arquivo_am("votacao_candidato_munzona", "votacao_candidato_munzona", ano)):
+                votos[(ano, v["SQ_CANDIDATO"], v["NR_TURNO"])] += int(v.get("QT_VOTOS_NOMINAIS") or 0)
+        except Exception as e:  # noqa: BLE001
+            log(f"[eleicoes] votos {ano}: {e}")
+
+    saida = {}
+    for p in politicos:
+        regras = cargos_por_casa.get(p["casa"], {})
+        nomes = {sem_acento(p["nome"]), sem_acento(p.get("nome_completo") or "")} - {""}
+        achou = None
+        for ano in sorted(regras, reverse=True):
+            for x in cand.get(ano, []):
+                if x["DS_CARGO"] not in regras[ano]:
+                    continue
+                if p.get("municipio") and ano == 2024 and sem_acento(x["NM_UE"]) != sem_acento(p["municipio"]):
+                    continue
+                if sem_acento(x["NM_URNA_CANDIDATO"]) in nomes or sem_acento(x["NM_CANDIDATO"]) in nomes:
+                    if x["DS_SITUACAO_CANDIDATURA"] == "INAPTO" and achou:
+                        continue
+                    achou = (ano, x)
+                    if x["DS_SITUACAO_CANDIDATURA"] != "INAPTO":
+                        break
+            if achou:
+                break
+        if not achou:
+            continue
+        ano, x = achou
+        turnos = {t: votos[(ano, x["SQ_CANDIDATO"], t)] for t in ("1", "2") if votos[(ano, x["SQ_CANDIDATO"], t)]}
+        saida[p["id"]] = {
+            "ano": ano,
+            "cargo": titulo(x["DS_CARGO"]),
+            "partido": x["SG_PARTIDO"],
+            "numero": x["NR_CANDIDATO"],
+            "situacao": titulo(x["DS_SIT_TOT_TURNO"]),
+            "votos": turnos.get("2") or turnos.get("1"),
+            "patrimonio": round(bens[(ano, x["SQ_CANDIDATO"])], 2) if (ano, x["SQ_CANDIDATO"]) in bens else None,
+            "nascimento": x.get("DT_NASCIMENTO") or None,
+            "instrucao": titulo(x.get("DS_GRAU_INSTRUCAO") or "") or None,
+            "ocupacao": titulo(x.get("DS_OCUPACAO") or "") or None,
+            "fonte": f"https://divulgacandcontas.tse.jus.br/",
+        }
+    log(f"[eleicoes] {len(saida)} de {len(politicos)} políticos encontrados no TSE")
+    return {"eleicoes": saida}
+
+
 # ------------------------------------------------------------------ main
 
 FONTES_INFO = {
@@ -559,7 +859,12 @@ FONTES_INFO = {
     "senado": ("Senado Federal — Dados Abertos", "https://legis.senado.leg.br/dadosabertos"),
     "prefeituras": ("TSE — Candidaturas 2024 e ajustes com fonte", "https://dadosabertos.tse.jus.br"),
     "emendas": ("Portal da Transparência — Emendas parlamentares", "https://portaldatransparencia.gov.br/emendas"),
+    "ceap_cmm": ("Câmara Municipal de Manaus — Cota parlamentar (SIGAE)", "https://www.cmm.am.gov.br/transparencia/#cotas-ceap"),
+    "camara_atividade": ("Câmara dos Deputados — Cota, presença e votações", "https://dadosabertos.camara.leg.br/swagger/api.html#staticfile"),
+    "eleicoes": ("TSE — Votos e bens declarados", "https://dadosabertos.tse.jus.br"),
 }
+# Fontes pesadas que só rodam quando pedidas pelo nome
+SOB_DEMANDA = {"eleicoes"}
 
 
 def main() -> int:
@@ -570,11 +875,14 @@ def main() -> int:
         "senado": coletar_senado,
         "prefeituras": coletar_executivo,
         "emendas": coletar_emendas,  # depende de camara e senado
+        "ceap_cmm": coletar_ceap_cmm,  # depende de cmm
+        "camara_atividade": coletar_camara_atividade,  # depende de camara
+        "eleicoes": coletar_eleicoes,  # sob demanda
     }
     meta_ant = ler("meta.json", {}) or {}
     fontes_meta = {f["id"]: f for f in meta_ant.get("fontes", [])}
     falhas = []
-    escolhidas = set(sys.argv[1:]) or set(tarefas)
+    escolhidas = set(sys.argv[1:]) or (set(tarefas) - SOB_DEMANDA)
     for chave, fn in tarefas.items():
         if chave not in escolhidas:
             continue
@@ -602,9 +910,24 @@ def main() -> int:
             politicos += dados["politicos"]
             normas += dados["normas"]
     emendas = (ler("fontes/emendas.json") or {}).get("emendas", {})
+    ceap_cmm = ler("fontes/ceap_cmm.json") or {}
+    atividade = ler("fontes/camara_atividade.json") or {}
+    eleicoes = (ler("fontes/eleicoes.json") or {}).get("eleicoes", {})
     for p in politicos:
         if p["id"] in emendas:
             p["emendas"] = emendas[p["id"]]
+        if p["id"] in ceap_cmm.get("cota", {}):
+            p["cota"] = ceap_cmm["cota"][p["id"]]
+        if p["id"] in atividade.get("atividade", {}):
+            a = atividade["atividade"][p["id"]]
+            p["cota"] = a["cota"]
+            p["presenca"] = a["presenca"]
+            p["votacoes"] = a["votos"]
+        if p["id"] in eleicoes:
+            p["eleicao"] = eleicoes[p["id"]]
+    # Notas fiscais da cota, das duas casas, num arquivo próprio (só a página de gastos carrega)
+    salvar("gastos.json", sorted(ceap_cmm.get("notas", []) + atividade.get("notas", []),
+                                 key=lambda n: n.get("data") or "", reverse=True))
     normas.sort(key=lambda n: n.get("data") or "", reverse=True)
     executivo = json.loads((DADOS / "executivo-manual.json").read_text(encoding="utf-8"))
     salvar("politicos.json", politicos)

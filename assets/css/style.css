@@ -320,3 +320,40 @@ a.barras__rot:hover { color: var(--accent); }
 .barras--rank li { grid-template-columns: 1.5rem minmax(9rem, 20rem) 1fr var(--v); }
 @media (max-width: 34rem) { .barras--reais li { grid-template-columns: 1fr 6rem; } .barras--rank li { grid-template-columns: 1.5rem 1fr 6rem; } }
 .pillar__index--valor { font-size: clamp(2rem, 1.4rem + 2.2vw, 3.25rem); white-space: nowrap; }
+
+/* ---------- Crachá do perfil ---------- */
+.cracha { padding-top: var(--space-3); }
+.cracha__lista {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(13rem, 1fr));
+  gap: var(--space-3) var(--space-3); margin: 0; padding: 0; list-style: none;
+}
+.cracha__lista li { border-top: 1px solid var(--rule); padding-top: var(--space-1); display: flex; flex-direction: column; gap: 0.2rem; }
+.cracha__n { font: 700 1.75rem/1.1 var(--font-serif); font-variant-numeric: tabular-nums; }
+.cracha__t { font-size: var(--fs-small); color: var(--muted); }
+
+/* ---------- Colunas mês a mês ---------- */
+.colunas {
+  display: flex; align-items: flex-end; gap: 3px;
+  height: 11rem; margin-top: var(--space-2); padding-bottom: 1.4rem;
+  border-bottom: 1px solid var(--rule); overflow-x: auto;
+}
+.colunas__c { position: relative; flex: 1 0 1.1rem; height: 100%; display: flex; align-items: flex-end; }
+.colunas__b { display: block; width: 100%; background: var(--ink); }
+.colunas__c:hover .colunas__b { background: var(--accent); }
+.colunas__r { position: absolute; bottom: -1.3rem; left: 50%; transform: translateX(-50%); font-size: 0.625rem; color: var(--muted); white-space: nowrap; }
+.colunas__c:not(:nth-child(3n+1)) .colunas__r { visibility: hidden; }
+
+/* ---------- Votos ---------- */
+.voto { display: inline-block; min-width: 2.6rem; padding: 0.05rem 0.4rem; margin-right: 0.35rem; font-size: 0.75rem; font-weight: 700; text-align: center; border: 1px solid var(--rule-soft); }
+.voto--sim { border-color: var(--ink); background: var(--ink); color: var(--paper); }
+.voto--nao { border-color: var(--accent); color: var(--accent); }
+
+/* ---------- Tabelas ---------- */
+.tabela-wrap { overflow-x: auto; margin-top: var(--space-2); }
+.tabela { width: 100%; border-collapse: collapse; font-size: var(--fs-small); }
+.tabela th, .tabela td { padding: 0.6rem 0.75rem 0.6rem 0; text-align: left; vertical-align: top; border-bottom: 1px solid var(--rule-soft); }
+.tabela thead th { font-size: 0.6875rem; font-weight: 700; letter-spacing: var(--tracking-caps); text-transform: uppercase; color: var(--muted); border-bottom: 2px solid var(--rule); }
+.tabela .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.tabela--comparar tbody th { width: 30%; font-weight: 600; color: var(--ink-soft); }
+.tabela--comparar td { width: 35%; font-size: 1rem; }
+.comparar__cab { display: flex; align-items: center; gap: var(--space-1); text-transform: none; letter-spacing: 0; font: 700 1.05rem/1.2 var(--font-serif); color: var(--ink); text-decoration: none; }

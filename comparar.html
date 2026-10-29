@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="pt-BR" data-root="">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Comparar políticos · Almanaque do Poder</title>
+  <meta name="description" content="Compare lado a lado votos, patrimônio, presença, produção legislativa e gastos de dois políticos do Amazonas.">
+  <meta name="author" content="NEX — Hub de Análise Estratégica">
+  <meta name="creator" content="NEX — Hub de Análise Estratégica">
+  <meta name="publisher" content="NEX — Hub de Análise Estratégica">
+  <meta name="application-name" content="Almanaque do Poder">
+  <meta name="theme-color" content="#f1ece4">
+  <meta property="og:site_name" content="Almanaque do Poder">
+  <meta property="og:title" content="Comparar políticos · Almanaque do Poder">
+  <meta property="og:locale" content="pt_BR">
+  <link rel="author" href="humans.txt">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Source+Serif+4:opsz,wght@8..60,600;8..60,700&display=swap">
+  <link rel="stylesheet" href="assets/css/style.css">
+  <link rel="stylesheet" href="assets/css/print.css">
+</head>
+<body data-page="comparar">
+  <a class="skip" href="#conteudo">Pular para o conteúdo</a>
+
+  <div class="wrap">
+    <header class="masthead">
+      <a class="masthead__brand" href="index.html">Almanaque do Poder</a>
+      <nav class="masthead__nav" aria-label="Principal">
+        <a href="index.html">Início</a>
+        <a href="politicos.html">Políticos</a>
+        <a href="leis.html">Leis e projetos</a>
+        <a href="rankings.html">Rankings</a>
+        <a href="gastos.html">Gastos</a>
+        <a href="comparar.html" aria-current="page">Comparar</a>
+        <a href="sobre.html">Sobre o projeto</a>
+      </nav>
+    </header>
+
+    <main id="conteudo">
+      <section class="hero">
+        <p class="kicker">Lado a lado</p>
+        <h1 class="display">Comparar políticos</h1>
+        <p class="lede">Escolha dois nomes e veja votos, patrimônio, presença, leis e gastos de cada um.</p>
+      </section>
+      <form class="filtros" onsubmit="return false">
+        <label><span>Primeiro</span><select id="f-a"></select></label>
+        <label><span>Segundo</span><select id="f-b"></select></label>
+      </form>
+      <div id="comparacao"><p class="muted">Carregando…</p></div>
+    </main>
+
+    <footer class="site-footer">
+      <p>Almanaque do Poder · Desenvolvido pela <a href="sobre.html#nex"><strong>NEX — Hub de Análise Estratégica</strong></a>.</p>
+      <p><span data-atualizado></span> <a href="sobre.html#fontes">Fontes</a></p>
+    </footer>
+  </div>
+
+  <script src="assets/js/app.js" defer></script>
+  <script src="assets/js/nex-brand.js" defer></script>
+</body>
+</html>
