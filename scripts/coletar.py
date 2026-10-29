@@ -123,6 +123,8 @@ def categoria(ementa: str) -> str:
 def sapl_paginas(base: str, caminho: str, params: dict | None = None, workers: int = 4) -> list[dict]:
     params = dict(params or {})
     params["page_size"] = 100
+    # Sem ordem fixa a API repete e pula registros entre páginas
+    params.setdefault("o", "id")
     url = f"{base}{caminho}?{urllib.parse.urlencode(params)}"
     primeira = jget(url)
     resultados = list(primeira["results"])
