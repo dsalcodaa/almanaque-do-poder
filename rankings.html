@@ -31,6 +31,7 @@
       <nav class="masthead__nav" aria-label="Principal">
         <a href="index.html">Início</a>
         <a href="politicos.html">Políticos</a>
+        <a href="partidos.html">Partidos</a>
         <a href="municipio.html">Municípios</a>
         <a href="leis.html">Leis e projetos</a>
         <a href="rankings.html" aria-current="page">Rankings</a>
@@ -49,9 +50,9 @@
         <h1 class="display">Rankings</h1>
         <p class="lede">Quem mais gasta e com o quê, quem mais falta, quem vota com o partido, quem mais aprova leis e homenagens.</p>
       </section>
-      <form class="filtros" onsubmit="return false">
-        <label><span>Casa</span><select id="f-casa"><option value="">Todas as casas</option></select></label>
-      </form>
+      <p class="kicker no-print">Cargo</p>
+      <ul class="rk-abas rk-abas--cargo no-print" id="rk-cargos" aria-label="Cargos"></ul>
+      <p class="kicker no-print" style="margin-top: var(--space-3);">Tema</p>
       <ul class="rk-abas no-print" id="rk-abas" aria-label="Categorias de ranking"></ul>
       <div id="rankings"><p class="muted">Carregando…</p></div>
     </main>

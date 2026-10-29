@@ -424,3 +424,19 @@ a.barras__rot:hover { color: var(--accent); }
 .linha-graf__v--fixo, .linha-graf__p:hover .linha-graf__v { opacity: 1; }
 .linha-graf__x { font: 11px var(--font-sans, Inter, sans-serif); fill: var(--muted); }
 .sub-graf { margin: var(--space-4) 0 0; font-size: var(--fs-small); font-weight: 700; letter-spacing: var(--tracking-caps); text-transform: uppercase; }
+
+/* Rankings: abas de cargo em destaque */
+.rk-abas--cargo button { font-size: 0.95rem; padding: 0.45rem 0.9rem; }
+
+/* Perfil: filtro por cargo (some só na tela; o PDF sai completo) */
+@media screen { .fora-cargo { display: none !important; } }
+.acoes-perfil { display: flex; flex-wrap: wrap; gap: 0.5rem; margin: var(--space-2) 0 0; }
+
+/* Card para redes sociais */
+.card-dialog { border: 0; padding: var(--space-2); width: min(92vw, 28rem); background: var(--paper); }
+.card-dialog::backdrop { background: rgba(26, 26, 26, 0.65); }
+.card-dialog img { display: block; width: 100%; height: auto; }
+.card-dialog__acoes { display: flex; flex-wrap: wrap; gap: 0.5rem; margin: var(--space-2) 0 0; }
+
+/* Partidos: barra proporcional à coluna escolhida */
+.pt-barra { display: block; height: 3px; background: var(--accent); margin-top: 0.3rem; max-width: 10rem; }

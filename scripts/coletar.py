@@ -1774,6 +1774,86 @@ def coletar_votos_territorio() -> dict:
     return {"pessoas": len(saida)}
 
 
+# Grafias diferentes da mesma sigla
+SIGLA_ALIAS = {"REP": "REPUBLICANOS", "PROGRESSISTAS": "PP", "PCDOB": "PC do B", "SD": "SOLIDARIEDADE",
+               "UNIÃO BRASIL": "UNIÃO", "PODEMOS": "PODE", "PATRI": "PATRIOTA"}
+# Mudanças de nome e incorporações registradas no TSE (sigla antiga: sucessora)
+SIGLA_SUCESSORA = {
+    "PMDB": "MDB", "PFL": "DEM", "DEM": "UNIÃO", "PSL": "UNIÃO", "PRONA": "PR", "PR": "PL", "PST": "PL", "PGT": "PL",
+    "PRB": "REPUBLICANOS", "PPS": "CIDADANIA", "PTN": "PODE", "PHS": "PODE", "PSC": "PODE", "PT do B": "AVANTE",
+    "PSDC": "DC", "PRN": "PTC", "PTC": "AGIR", "PMN": "MOBILIZA", "PEN": "PATRIOTA", "PRP": "PATRIOTA",
+    "PAN": "PTB", "PATRIOTA": "PRD", "PTB": "PRD", "PROS": "SOLIDARIEDADE", "PPL": "PC do B", "PPB": "PP",
+}
+
+
+def sigla_atual(s: str | None) -> str:
+    s = SIGLA_ALIAS.get(s or "", s or "")
+    while s in SIGLA_SUCESSORA:
+        s = SIGLA_SUCESSORA[s]
+    return s
+
+
+def montar_partidos() -> None:
+    """Junta o histórico do TSE e as campanhas por partido, agrupando siglas antigas na sucessora atual.
+
+    Gera data/partidos.json (resumo de todos) e data/partidos/{slug}.json (eleitos de cada um)."""
+    pasta = DADOS / "pessoas"
+    if not (pasta / "indice.json").exists():
+        return
+    res = defaultdict(lambda: {"siglas": Counter(), "candidaturas": 0, "eleitos": 0, "por_ano": {}, "por_cargo": {}, "campanha": {}})
+    eleitos = defaultdict(list)
+    for arq in sorted(pasta.glob("??.json")):
+        for pid, pe in json.loads(arq.read_text(encoding="utf-8")).items():
+            for c in pe["candidaturas"]:
+                if not c.get("partido") or "SUPLENTE" in c["cargo"].upper():
+                    continue
+                sig = SIGLA_ALIAS.get(c["partido"], c["partido"])
+                s = sigla_atual(sig)
+                r = res[s]
+                r["siglas"][sig] += 1
+                r["candidaturas"] += 1
+                a = r["por_ano"].setdefault(str(c["ano"]), [0, 0, 0, []])  # candidaturas, eleitos, votos, siglas usadas
+                a[0] += 1
+                a[2] += c.get("votos") or 0
+                if sig not in a[3]:
+                    a[3].append(sig)
+                pc = r["por_cargo"].setdefault(c["cargo"], [0, 0])
+                pc[0] += 1
+                if c.get("eleito"):
+                    r["eleitos"] += 1
+                    a[1] += 1
+                    pc[1] += 1
+                    eleitos[s].append([pid, c.get("urna") or pe["nome"], c["cargo"], c["ue"], c["ano"], c.get("votos"), sig])
+    pasta_doa = DADOS / "doacoes"
+    for arq in sorted(pasta_doa.glob("??.json")) if pasta_doa.exists() else []:
+        for anos in json.loads(arq.read_text(encoding="utf-8")).values():
+            for ano, x in anos.items():
+                if not x.get("partido"):
+                    continue
+                cp = res[sigla_atual(x["partido"])]["campanha"].setdefault(ano, [0, 0, 0, 0])  # arrecadado, público, gasto, campanhas
+                cp[0] += x.get("total") or 0
+                cp[1] += x.get("publico") or 0
+                cp[2] += x.get("gasto_total") or 0
+                cp[3] += 1
+    destino = DADOS / "partidos"
+    destino.mkdir(exist_ok=True)
+    for p in destino.glob("*.json"):
+        p.unlink()
+    # Vereadores fora de Manaus eleitos na última eleição municipal: mandato vigente sem cadastro próprio no site
+    ano_mun = max((e[4] for es in eleitos.values() for e in es if e[2] == "Vereador"), default=0)
+    saida = {}
+    for s, r in res.items():
+        r["vereadores_interior"] = sum(1 for e in eleitos[s] if e[4] == ano_mun and e[2] == "Vereador" and e[3] != "Manaus")
+        r["siglas"] = [k for k, _ in r["siglas"].most_common()]
+        r["slug"] = slug(s)
+        for v in r["campanha"].values():
+            v[:3] = [round(x, 2) for x in v[:3]]
+        saida[s] = r
+        salvar(f"partidos/{r['slug']}.json", sorted(eleitos[s], key=lambda e: (-e[4], e[2], -(e[5] or 0))))
+    salvar("partidos.json", {"ano_municipal": ano_mun, "alias": SIGLA_ALIAS, "sucessora": SIGLA_SUCESSORA, "partidos": saida})
+    log(f"[partidos] {len(saida)} partidos")
+
+
 def ligar_pessoas(politicos: list[dict]) -> None:
     """Liga cada político em exercício à sua pessoa no histórico do TSE (nome civil + nascimento, ou nome de urna)."""
     pasta = DADOS / "pessoas"
@@ -2385,6 +2465,10 @@ def main() -> int:
     executivo = json.loads((DADOS / "executivo-manual.json").read_text(encoding="utf-8"))
     salvar("politicos.json", politicos)
     salvar("normas.json", normas)
+    try:
+        montar_partidos()
+    except Exception as e:  # noqa: BLE001
+        log(f"[partidos] FALHOU: {e} — mantendo dados anteriores")
     salvar("meta.json", {
         "gerado_em": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "fontes": list(fontes_meta.values()),

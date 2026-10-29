@@ -10,9 +10,10 @@ Uma plataforma de transparência, inteligência pública e análise política.
 | --- | --- |
 | `index.html` | Página inicial, com painel de números e eleitos de 2026 |
 | `politicos.html` | Lista de políticos com filtros por casa, partido e nome |
-| `politico.html?id=…` | Perfil: crachá com votos e patrimônio, presença, votações, cota, emendas, leis e contato |
+| `politico.html?id=…` | Perfil (com filtro por cargo, card para redes sociais e PDF completo): crachá com votos e patrimônio, presença, votações, cota, emendas, leis e contato |
+| `partidos.html?p=…` | Partidos: índice de poder, mandatos vigentes, histórico desde 2000, eleitos e dinheiro de campanha |
 | `leis.html` | Normas aprovadas, com filtros por casa, categoria, ano e autor |
-| `rankings.html` | Rankings: leis, homenagens, presença, fidelidade ao partido, cota, patrimônio, votos e emendas |
+| `rankings.html` | Rankings separados por cargo: leis, homenagens, presença, fidelidade ao partido, cota, patrimônio, votos e emendas |
 | `gastos.html` | Cota parlamentar: notas fiscais, categorias, fornecedores, evolução mensal e CSV |
 | `comparar.html?ids=a,b` | Dois políticos lado a lado |
 | `diario.html` | Citações dos políticos nos diários oficiais (ALEAM, CMM e DOE-AM) |
@@ -60,6 +61,7 @@ python -m http.server 8000
 | Acervo de leis do AM | SAPL (ALEAM, CMM e 9 câmaras) e Diário Oficial dos Municípios (AAM), incremental (`acervo_leis`); inspirado em leonzordhue/leismunicipais e leisestaduais |
 | Financiamento de campanha | TSE, prestação de contas dos candidatos desde 2018 (`doacoes`; lê só o CSV do AM dentro do zip nacional) |
 | Tribunais e Ministério Público | DadosJusBr (TJAM, MPAM, TRT-11, TRE-AM) e contracheques em PDF do TCE-AM; coleta semestral |
+| Partidos | Gerado do histórico do TSE e das doações na consolidação (`data/partidos.json` e `data/partidos/`); siglas antigas agrupadas na sucessora |
 | Votos por município e bairro | TSE: `votacao_candidato_munzona`, `votacao_secao` e locais de votação (`votos_territorio`) |
 
 Para atualizar os dados localmente:

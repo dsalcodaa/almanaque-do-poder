@@ -83,14 +83,46 @@
   var FONTE_VOTOS = { camara: "Câmara dos Deputados, arquivos de votações.", senado: "Senado Federal, votações nominais." };
   function parteDe(id) { return "pessoas/" + id.slice(4, 6) + ".json"; }
   function fotoPessoa(r) { return r[8] ? "data/fotos/" + r[0] + ".webp" : null; }
+  // Filtro "separar por cargo" do perfil. Cada eleição tem uma só candidatura,
+  // então o ano identifica o cargo nos blocos de campanha e de território.
+  var filtroCargo = { atual: "", anos: {} };
+  function aplicarCargo() {
+    var c = filtroCargo.atual, anos = c ? filtroCargo.anos[c] || {} : null;
+    [].forEach.call(document.querySelectorAll("[data-cargo]"), function (el) { el.classList.toggle("fora-cargo", !!c && el.getAttribute("data-cargo") !== c); });
+    [].forEach.call(document.querySelectorAll("[data-ano-bloco]"), function (el) { el.classList.toggle("fora-cargo", !!anos && !anos[el.getAttribute("data-ano-bloco")]); });
+    [].forEach.call(document.querySelectorAll("[data-filtro-cargo]"), function (b) { b.setAttribute("aria-pressed", String(b.getAttribute("data-filtro-cargo") === c)); });
+    var sel = $("#terr-ano");
+    if (sel) {
+      var vis = [];
+      [].forEach.call(sel.options, function (o) { o.hidden = o.disabled = !!anos && !anos[o.value]; if (!o.hidden) vis.push(o.value); });
+      if (vis.length && vis.indexOf(sel.value) < 0) { sel.value = vis[0]; sel.dispatchEvent(new Event("change")); }
+      sel.closest("section").classList.toggle("fora-cargo", !vis.length);
+    }
+  }
   function historicoHTML(pe) {
     var cs = pe.candidaturas.slice().sort(function (a, b) { return b.ano - a.ano; });
-    var pat = {};
-    cs.forEach(function (c) { if (c.patrimonio != null) pat[String(c.ano)] = c.patrimonio; });
-    var h = '<section class="section"><p class="kicker">Histórico eleitoral</p><h2 class="h2">Todas as candidaturas no Amazonas</h2>' +
-      '<div class="tabela-wrap"><table class="tabela"><thead><tr><th>Ano</th><th>Cargo</th><th>Onde</th><th>Partido</th><th class="num">Votos</th><th>Resultado</th><th class="num">Bens declarados</th></tr></thead><tbody>' +
+    var pat = {}, porCargo = {}, ordem = [];
+    cs.forEach(function (c) {
+      if (c.patrimonio != null) pat[String(c.ano)] = c.patrimonio;
+      if (!porCargo[c.cargo]) { porCargo[c.cargo] = []; ordem.push(c.cargo); }
+      porCargo[c.cargo].push(c);
+    });
+    filtroCargo.anos = {};
+    ordem.forEach(function (k) { filtroCargo.anos[k] = {}; porCargo[k].forEach(function (c) { filtroCargo.anos[k][c.ano] = true; }); });
+    var h = '<section class="section"><p class="kicker">Histórico eleitoral</p><h2 class="h2">Todas as candidaturas no Amazonas</h2>';
+    if (ordem.length > 1) {
+      h += '<h3 class="eleitos__cargo">Resumo por cargo</h3><div class="tabela-wrap"><table class="tabela"><thead><tr><th>Cargo</th><th class="num">Candidaturas</th><th class="num">Eleito(a)</th><th class="num">Melhor votação</th><th>Anos</th></tr></thead><tbody>' +
+        ordem.map(function (k) {
+          var l = porCargo[k], melhor = Math.max.apply(null, l.map(function (c) { return c.votos || 0; }));
+          return "<tr><td>" + esc(k) + '</td><td class="num">' + l.length + '</td><td class="num">' + l.filter(function (c) { return c.eleito; }).length +
+            '</td><td class="num">' + (melhor ? num(melhor) : "—") + "</td><td>" + l.map(function (c) { return c.ano; }).reverse().join(", ") + "</td></tr>";
+        }).join("") + "</tbody></table></div>" +
+        '<p class="kicker no-print" style="margin-top: var(--space-3);">Separar por cargo</p><ul class="rk-abas no-print"><li><button type="button" data-filtro-cargo="" aria-pressed="true">Todos os cargos</button></li>' +
+        ordem.map(function (k) { return '<li><button type="button" data-filtro-cargo="' + esc(k) + '" aria-pressed="false">' + esc(k) + " (" + porCargo[k].length + ")</button></li>"; }).join("") + "</ul>";
+    }
+    h += '<div class="tabela-wrap" style="margin-top: var(--space-2);"><table class="tabela"><thead><tr><th>Ano</th><th>Cargo</th><th>Onde</th><th>Partido</th><th class="num">Votos</th><th>Resultado</th><th class="num">Bens declarados</th></tr></thead><tbody>' +
       cs.map(function (c) {
-        return "<tr><td>" + c.ano + "</td><td>" + esc(c.cargo) + (c.urna ? '<span class="ledger__sub">' + esc(c.urna) + "</span>" : "") + "</td><td>" +
+        return '<tr data-cargo="' + esc(c.cargo) + '"><td>' + c.ano + "</td><td>" + esc(c.cargo) + (c.urna ? '<span class="ledger__sub">' + esc(c.urna) + "</span>" : "") + "</td><td>" +
           (c.ue !== "Amazonas" ? '<a href="municipio.html?m=' + encodeURIComponent(slugJS(c.ue)) + '">' + esc(c.ue) + "</a>" : "Amazonas") + "</td><td>" + esc(c.partido || "—") +
           '</td><td class="num">' + (c.votos != null ? num(c.votos) : "—") + "</td><td>" + (c.eleito ? '<span class="tag tag--accent">' + esc(c.situacao) + "</span>" : esc(c.situacao || "—")) +
           '</td><td class="num">' + (c.patrimonio != null ? reais(c.patrimonio) : "—") + "</td></tr>";
@@ -104,7 +136,7 @@
       '<p class="prose">Não há prestação de contas no TSE para as campanhas desta pessoa de 2018 em diante. Eleições anteriores a 2018 ainda não foram incluídas, e há candidatos que não declararam receitas.</p></section>';
     return '<section class="section"><p class="kicker">Financiamento de campanha</p><h2 class="h2">Quem pagou as campanhas e com o que gastaram</h2>' + anos.map(function (a) {
       var x = d[a];
-      return '<h3 class="eleitos__cargo" style="margin-top: var(--space-4);">' + a + (x.cargo ? " · " + esc(x.cargo) : "") + (x.ue && x.ue !== "Amazonas" ? " em " + esc(x.ue) : "") + (x.partido ? " · " + esc(x.partido) : "") + "</h3>" +
+      return '<div data-ano-bloco="' + a + '"><h3 class="eleitos__cargo" style="margin-top: var(--space-4);">' + a + (x.cargo ? " · " + esc(x.cargo) : "") + (x.ue && x.ue !== "Amazonas" ? " em " + esc(x.ue) : "") + (x.partido ? " · " + esc(x.partido) : "") + "</h3>" +
         (!x.total ? "" : '<ul class="pillars"><li class="pillar"><span class="pillar__index pillar__index--valor">' + reais(x.total) + '</span><p class="pillar__text">arrecadados na campanha</p></li>' +
         '<li class="pillar"><span class="pillar__index pillar__index--accent">' + pct(x.publico, x.total) + '</span><p class="pillar__text">dinheiro público (fundo eleitoral e fundo partidário)</p></li>' +
         '<li class="pillar"><span class="pillar__index">' + pct(x.proprio, x.total) + '</span><p class="pillar__text">do próprio bolso do candidato</p></li></ul>' +
@@ -114,7 +146,7 @@
         (x.estimado ? '<p class="muted">' + reais(x.estimado) + " foram doações estimadas (serviços ou bens cedidos, sem dinheiro).</p>" : "") +
         (x.gastos ? '<h4 class="sub-graf">Com o que gastou: ' + reais(x.gasto_total) + " em despesas contratadas</h4>" + barras(x.gastos, reais, "barras--reais", 12) +
           '<div class="tabela-wrap"><table class="tabela"><thead><tr><th>Maiores fornecedores da campanha</th><th>Tipo de gasto</th><th class="num">Valor</th></tr></thead><tbody>' +
-          x.fornecedores.map(function (r) { return "<tr><td>" + esc(r[0]) + "</td><td>" + esc(r[1]) + '</td><td class="num">' + reais(r[2]) + "</td></tr>"; }).join("") + "</tbody></table></div>" : "");
+          x.fornecedores.map(function (r) { return "<tr><td>" + esc(r[0]) + "</td><td>" + esc(r[1]) + '</td><td class="num">' + reais(r[2]) + "</td></tr>"; }).join("") + "</tbody></table></div>" : "") + "</div>";
     }).join("") + '<p class="muted">Fonte: TSE, prestação de contas final dos candidatos (2018 em diante). Desde 2015, empresas não podem doar para campanhas.</p></section>';
   }
   function territorioHTML(t) {
@@ -125,11 +157,35 @@
       '<p class="muted">Fonte: TSE, votação por município e zona (desde 2000) e por seção eleitoral, ligada ao bairro do local de votação (desde 2018). Votos do 1º turno.</p></section>';
     return h;
   }
+  var terrDados = null;
   function territorioRender(t) {
     var sel = $("#terr-ano"), corpo = $("#terr-corpo");
     if (!sel || !corpo) return;
-    function render() {
-      var e = t[sel.value], h = "";
+    terrDados = t;
+    function render() { corpo.innerHTML = terrBloco(t, sel.value); }
+    sel.addEventListener("change", render);
+    render();
+    aplicarCargo();
+  }
+  // No PDF saem todos os cargos e todas as eleições do território.
+  window.addEventListener("beforeprint", function () {
+    filtroCargo.salvo = filtroCargo.atual; filtroCargo.atual = ""; aplicarCargo();
+    var corpo = $("#terr-corpo");
+    if (corpo && terrDados) corpo.innerHTML = Object.keys(terrDados).sort().reverse().map(function (a) { return '<h3 class="eleitos__cargo" style="margin-top: var(--space-4);">Eleição de ' + a + "</h3>" + terrBloco(terrDados, a); }).join("");
+  });
+  window.addEventListener("afterprint", function () {
+    filtroCargo.atual = filtroCargo.salvo || ""; aplicarCargo();
+    var sel = $("#terr-ano"), corpo = $("#terr-corpo");
+    if (corpo && sel && terrDados) corpo.innerHTML = terrBloco(terrDados, sel.value);
+  });
+  document.addEventListener("click", function (e) {
+    var b = e.target.closest && e.target.closest("[data-filtro-cargo]");
+    if (!b) return;
+    filtroCargo.atual = b.getAttribute("data-filtro-cargo");
+    aplicarCargo();
+  });
+  function terrBloco(t, ano) {
+      var e = t[ano], h = "";
       var umMun = e.municipios.length === 1;
       if (!umMun) {
         var m = {};
@@ -140,14 +196,11 @@
         var b = {};
         e.bairros.forEach(function (r) { b[(umMun ? "" : r[0] + " · ") + r[1]] = r[2]; });
         h += '<h3 class="sub-graf">Votos por bairro' + (umMun ? " em " + esc(e.municipios[0][0]) + " (" + num(e.total) + " no total)" : "") + "</h3>" + barras(b, num, "barras--reais", 15);
-      } else if (+sel.value < 2018) {
+      } else if (+ano < 2018) {
         h += '<p class="muted">Votos por bairro só a partir de 2018.</p>';
       }
       if (umMun && !e.bairros) h += '<p class="prose">' + num(e.total) + " votos em " + esc(e.municipios[0][0]) + ".</p>";
-      corpo.innerHTML = h;
-    }
-    sel.addEventListener("change", render);
-    render();
+      return h;
   }
   function carregarTerritorio(id) {
     return carregar("territorio/" + id.slice(4, 6) + ".json").then(function (x) { return x[id]; }).catch(function () { return null; });
@@ -381,6 +434,125 @@
     }).catch(function (e) { erro(lista, e); });
   }
 
+  // ---------- card para redes sociais (PNG 1080 x 1350) ----------
+  function carregarImg(srcs) {
+    return new Promise(function (ok) {
+      var i = 0;
+      (function prox() {
+        if (i >= srcs.length) return ok(null);
+        var im = new Image();
+        im.crossOrigin = "anonymous"; // foto de outro site sem CORS falha aqui, em vez de bloquear o PNG
+        im.onload = function () { ok(im); };
+        im.onerror = function () { i++; prox(); };
+        im.src = srcs[i];
+      })();
+    });
+  }
+  function quebrar(ctx, texto, larg, max) {
+    var linhas = [], atual = "";
+    String(texto || "").split(/\s+/).forEach(function (p) {
+      var t = atual ? atual + " " + p : p;
+      if (ctx.measureText(t).width > larg && atual) { linhas.push(atual); atual = p; } else atual = t;
+    });
+    if (atual) linhas.push(atual);
+    if (linhas.length > max) { linhas = linhas.slice(0, max); linhas[max - 1] += "…"; }
+    return linhas;
+  }
+  function gerarCard(d) {
+    var W = 1080, H = 1350, M = 72, cv = document.createElement("canvas");
+    cv.width = W; cv.height = H;
+    var x = cv.getContext("2d"), SERIF = '"Source Serif 4", Georgia, serif', SANS = "Inter, system-ui, sans-serif";
+    var INK = "#1a1a1a", MUTED = "#6b6660", ACC = "#b3261e";
+    var fontes = document.fonts ? Promise.all(['700 64px "Source Serif 4"', "600 28px Inter", "400 28px Inter"].map(function (f) { return document.fonts.load(f); })).catch(function () {}) : null;
+    return Promise.all([carregarImg(d.fotos), carregarImg(["assets/img/logo-icone.png"]), fontes]).then(function (r) {
+      var im = r[0], logo = r[1];
+      x.fillStyle = "#f1ece4"; x.fillRect(0, 0, W, H);
+      x.fillStyle = INK; x.fillRect(0, 0, W, 14);
+      if (logo) x.drawImage(logo, M, 52, 60, 60);
+      x.font = "700 36px " + SERIF; x.fillText("Almanaque do Poder", M + (logo ? 76 : 0), 95);
+      x.fillRect(M, 140, W - 2 * M, 3);
+      // Foto quadrada, recortada pelo topo para manter o rosto
+      var fy = 184, fs = 300;
+      if (im) {
+        var sw = Math.min(im.width, im.height);
+        x.drawImage(im, (im.width - sw) / 2, 0, sw, sw, M, fy, fs, fs);
+      } else {
+        x.fillStyle = "#d9d2c6"; x.fillRect(M, fy, fs, fs);
+        x.fillStyle = MUTED; x.font = "700 110px " + SERIF; x.textAlign = "center";
+        x.fillText(iniciais(d.nome), M + fs / 2, fy + fs / 2 + 38); x.textAlign = "left";
+      }
+      var tx = M + fs + 44, tl = W - M - tx, y = fy + 30;
+      x.fillStyle = ACC; x.font = "600 26px " + SANS;
+      quebrar(x, d.kicker.toUpperCase(), tl, 2).forEach(function (l) { x.fillText(l, tx, y); y += 34; });
+      y += 46; x.fillStyle = INK;
+      var tam = d.nome.length > 22 ? 52 : 64;
+      x.font = "700 " + tam + "px " + SERIF;
+      quebrar(x, d.nome, tl, 3).forEach(function (l) { x.fillText(l, tx, y); y += tam * 1.08; });
+      y += 8; x.fillStyle = MUTED; x.font = "400 26px " + SANS;
+      quebrar(x, d.linha, tl, 3).forEach(function (l) { x.fillText(l, tx, y); y += 34; });
+      // Números principais: duas colunas, até seis itens
+      var gy = Math.max(fy + fs, y) + 56, cw = (W - 2 * M - 48) / 2;
+      d.numeros.slice(0, 6).forEach(function (n, i) {
+        var cx = M + (i % 2) * (cw + 48), cy = gy + Math.floor(i / 2) * 190;
+        x.fillStyle = i === 0 ? ACC : INK; x.fillRect(cx, cy, cw, 3);
+        var f = 60;
+        do { x.font = "700 " + f + "px " + SERIF; f -= 4; } while (x.measureText(n[0]).width > cw && f > 28);
+        x.fillStyle = INK; x.fillText(n[0], cx, cy + 72);
+        x.fillStyle = MUTED; x.font = "400 24px " + SANS;
+        quebrar(x, n[1], cw, 2).forEach(function (l, j) { x.fillText(l, cx, cy + 116 + j * 30); });
+      });
+      x.fillStyle = INK; x.fillRect(M, H - 150, W - 2 * M, 2);
+      x.fillStyle = MUTED; x.font = "400 22px " + SANS;
+      x.fillText("Dados oficiais: TSE, Câmara, Senado, ALEAM, CMM e Portal da Transparência.", M, H - 108);
+      x.fillStyle = INK; x.font = "600 22px " + SANS;
+      x.fillText("Desenvolvido pela NEX — Hub de Análise Estratégica", M, H - 72);
+      x.fillStyle = MUTED; x.font = "400 22px " + SANS;
+      x.fillText((location.host + location.pathname.replace(/[^/]*$/, "")).replace(/\/$/, ""), M, H - 38);
+      return cv;
+    });
+  }
+  function mostrarCard(d, botao) {
+    var txt = botao.textContent;
+    botao.disabled = true; botao.textContent = "Gerando…";
+    var fim = function () { botao.disabled = false; botao.textContent = txt; };
+    gerarCard(d).then(function (cv) {
+      cv.toBlob(function (blob) {
+        fim();
+        if (!blob) return;
+        var url = URL.createObjectURL(blob), nome = "almanaque-" + slugJS(d.nome) + ".png";
+        var arq = window.File ? new File([blob], nome, { type: "image/png" }) : null;
+        var pode = arq && navigator.canShare && navigator.canShare({ files: [arq] });
+        var dlg = document.createElement("dialog");
+        dlg.className = "card-dialog";
+        dlg.innerHTML = '<img src="' + url + '" alt="Card de ' + esc(d.nome) + ' para redes sociais"><p class="card-dialog__acoes">' +
+          '<a class="button" href="' + url + '" download="' + esc(nome) + '">Baixar imagem</a>' +
+          (pode ? '<button class="button button--ghost" type="button" data-acao="compartilhar">Compartilhar</button>' : "") +
+          '<button class="button button--ghost" type="button" data-acao="fechar">Fechar</button></p>';
+        document.body.appendChild(dlg);
+        dlg.addEventListener("click", function (e) {
+          var a = e.target.getAttribute("data-acao");
+          if (a === "fechar" || e.target === dlg) dlg.close();
+          if (a === "compartilhar") navigator.share({ files: [arq], title: d.nome + " · Almanaque do Poder" }).catch(function () {});
+        });
+        dlg.addEventListener("close", function () { URL.revokeObjectURL(url); dlg.remove(); });
+        dlg.showModal();
+      }, "image/png");
+    }).catch(fim);
+  }
+  function acoesPerfil() {
+    return '<p class="no-print acoes-perfil"><button class="button" type="button" id="btn-card">Gerar card para redes sociais</button>' +
+      '<button class="button button--ghost" type="button" onclick="window.print()">Exportar PDF</button></p>';
+  }
+  function ligarCard(d) {
+    var b = $("#btn-card");
+    if (b) b.addEventListener("click", function () { mostrarCard(d, b); });
+  }
+  function crachaHTML(cr) {
+    return '<section class="section cracha"><ul class="cracha__lista">' + cr.map(function (c) {
+      return '<li><span class="cracha__n">' + esc(c[0]) + '</span><span class="cracha__t">' + esc(c[1]) + "</span></li>";
+    }).join("") + "</ul></section>";
+  }
+
   // ---------- perfil ----------
   function paginaPessoa(alvo, id, pol) {
     var atual = pol.find(function (x) { return x.pessoa === id; });
@@ -396,14 +568,15 @@
         '<h1 class="display">' + esc(nome) + "</h1>" +
         '<p class="lede">' + esc([pe.nome !== nome ? pe.nome : "", "última candidatura: " + u.cargo + " em " + u.ano + (u.ue !== "Amazonas" ? " (" + u.ue + ")" : ""), u.partido].filter(Boolean).join(" · ")) + "</p></div></div></section>";
       var cr = [];
-      if (idade(pe.nascimento)) cr.push([idade(pe.nascimento) + " anos", "nascimento em " + esc(pe.nascimento)]);
+      if (idade(pe.nascimento)) cr.push([idade(pe.nascimento) + " anos", "nascimento em " + pe.nascimento]);
       cr.push([num(cs.length), cs.length === 1 ? "candidatura no Amazonas" : "candidaturas no Amazonas desde " + cs[cs.length - 1].ano]);
+      if (ganhas.length) cr.push([num(ganhas.length), ganhas.length === 1 ? "eleição vencida" : "eleições vencidas"]);
       var maisVotos = cs.reduce(function (m, c) { return (c.votos || 0) > (m.votos || 0) ? c : m; }, {});
-      if (maisVotos.votos) cr.push([num(maisVotos.votos), "votos, o melhor resultado (" + esc(maisVotos.cargo.toLowerCase()) + ", " + maisVotos.ano + ")"]);
+      if (maisVotos.votos) cr.push([num(maisVotos.votos), "votos, o melhor resultado (" + maisVotos.cargo.toLowerCase() + ", " + maisVotos.ano + ")"]);
       var ultPat = cs.find(function (c) { return c.patrimonio != null; });
       if (ultPat) cr.push([reais(ultPat.patrimonio), "patrimônio declarado em " + ultPat.ano]);
-      if (pe.ocupacao || pe.instrucao) cr.push([esc(pe.ocupacao || "—"), esc(pe.instrucao || "")]);
-      h += '<section class="section cracha"><ul class="cracha__lista">' + cr.map(function (c) { return '<li><span class="cracha__n">' + c[0] + '</span><span class="cracha__t">' + c[1] + "</span></li>"; }).join("") + "</ul></section>";
+      if (pe.ocupacao || pe.instrucao) cr.push([pe.ocupacao || "—", pe.instrucao || ""]);
+      h += acoesPerfil() + crachaHTML(cr);
       h += historicoHTML(pe);
       h += '<div id="territorio"></div><div id="doacoes"></div>';
       h += '<section class="section"><p class="kicker">Mandato</p><h2 class="h2">Votações, presença e gastos</h2><p class="prose">' +
@@ -412,7 +585,9 @@
           : "Sem mandato conquistado nas eleições registradas pelo TSE, por isso não há votações, presença ou gastos de gabinete.") +
         '</p><p><a href="gastos.html">Pesquisar o nome nos gastos de gabinete</a> · <a href="diario.html">Buscar no Diário Oficial</a></p></section>';
       alvo.innerHTML = h;
-      carregarDoacoes(id).then(function (d) { var box = $("#doacoes"); if (box) box.outerHTML = doacoesHTML(d); });
+      ligarCard({ nome: nome, kicker: ganhas.length ? "Eleito(a) " + ganhas.length + (ganhas.length === 1 ? " vez" : " vezes") : "Candidato(a)",
+        linha: [u.partido, "última candidatura: " + u.cargo + " em " + u.ano].filter(Boolean).join(" · "), fotos: pe.foto ? [pe.foto] : [], numeros: cr });
+      carregarDoacoes(id).then(function (d) { var box = $("#doacoes"); if (box) box.outerHTML = doacoesHTML(d); aplicarCargo(); });
       mostrarTerritorio(id);
     }).catch(function (e) { erro(alvo, e); });
   }
@@ -431,9 +606,9 @@
         setTimeout(function () {
           carregar(parteDe(p.pessoa)).then(function (parte) {
             var box = $("#historico");
-            if (box && parte[p.pessoa]) box.outerHTML = historicoHTML(parte[p.pessoa]);
+            if (box && parte[p.pessoa]) { box.outerHTML = historicoHTML(parte[p.pessoa]); aplicarCargo(); }
           }).catch(function () {});
-          carregarDoacoes(p.pessoa).then(function (d) { var box = $("#doacoes"); if (box) box.outerHTML = doacoesHTML(d); });
+          carregarDoacoes(p.pessoa).then(function (d) { var box = $("#doacoes"); if (box) box.outerHTML = doacoesHTML(d); aplicarCargo(); });
           mostrarTerritorio(p.pessoa);
         }, 0);
       }
@@ -443,26 +618,23 @@
       var h = '<section class="hero hero--perfil"><div class="perfil__topo">' + foto(p, "avatar--grande") + "<div>" +
         '<p class="kicker">' + esc(p.cargo) + (p.municipio && p.casa === "prefeituras" ? " · " + esc(p.municipio) : "") + "</p>" +
         '<h1 class="display">' + esc(p.nome) + "</h1>" +
-        '<p class="lede">' + esc([p.partido, CASAS[p.casa], p.periodo ? "dados desde " + dataBR(p.periodo) : ""].filter(Boolean).join(" · ")) + "</p>" +
+        '<p class="lede">' + (p.partido ? '<a href="partidos.html?p=' + encodeURIComponent(p.partido) + '">' + esc(p.partido) + "</a> · " : "") + esc([CASAS[p.casa], p.periodo ? "dados desde " + dataBR(p.periodo) : ""].filter(Boolean).join(" · ")) + "</p>" +
         "</div></div>";
       if (p.nota) h += '<p class="nota">' + esc(p.nota) + "</p>";
       h += "</section>";
 
       // Crachá: os números principais do mandato, cada um com fonte oficial
       var cr = [], el = p.eleicao, pr = somaPresenca(p.presenca), tc = totalCota(p);
-      if (el && el.votos) cr.push([num(el.votos), "votos na eleição de " + el.ano + " para " + esc(el.cargo.toLowerCase()) + " · " + esc(el.situacao.toLowerCase().replace("por qp", "por quociente partidário"))]);
+      if (el && el.votos) cr.push([num(el.votos), "votos na eleição de " + el.ano + " para " + el.cargo.toLowerCase() + " · " + el.situacao.toLowerCase().replace("por qp", "por quociente partidário")]);
       if (el && el.patrimonio != null) cr.push([reais(el.patrimonio), "patrimônio declarado ao TSE em " + el.ano]);
-      if (el && idade(el.nascimento)) cr.push([idade(el.nascimento) + " anos", [el.instrucao, el.ocupacao].filter(Boolean).map(esc).join(" · ")]);
+      if (el && idade(el.nascimento)) cr.push([idade(el.nascimento) + " anos", [el.instrucao, el.ocupacao].filter(Boolean).join(" · ")]);
       if (pr.sessoes) cr.push([pct(pr.presente, pr.sessoes), "presença em sessões (" + num(pr.presente) + " de " + num(pr.sessoes) + ")"]);
       if (pr.sessoes) cr.push([num(pr.sessoes - pr.presente), "faltas em sessões desde " + Object.keys(p.presenca).sort()[0]]);
       if (p.votacoes && p.votacoes.com_orientacao) cr.push([pct(p.votacoes.seguiu_partido, p.votacoes.com_orientacao), "das votações, votou com a maioria do próprio partido"]);
       if (tc != null) cr.push([reais(tc), "de cota parlamentar desde " + Object.keys(p.cota).sort()[0]]);
-      if (p.emendas) cr.push([reais(p.emendas.pago), "em emendas pagas desde " + esc(p.emendas.desde)]);
-      if (cr.length) {
-        h += '<section class="section cracha"><ul class="cracha__lista">' + cr.map(function (c) {
-          return '<li><span class="cracha__n">' + c[0] + '</span><span class="cracha__t">' + c[1] + "</span></li>";
-        }).join("") + "</ul></section>";
-      }
+      if (p.emendas) cr.push([reais(p.emendas.pago), "em emendas pagas desde " + p.emendas.desde]);
+      h += acoesPerfil();
+      if (cr.length) h += crachaHTML(cr);
 
       if (m) {
         h += '<section class="section"><ul class="pillars">' +
@@ -594,8 +766,10 @@
       if (p.email) h += '<li><span class="ledger__key">E-mail</span><span><a href="mailto:' + esc(p.email) + '">' + esc(p.email) + "</a></span></li>";
       if (p.fonte) h += '<li><span class="ledger__key">Fonte</span><span><a href="' + esc(p.fonte) + '" target="_blank" rel="noopener">' + esc(p.fonte) + "</a></span></li>";
       h += "</ul></section>";
-      h += '<p class="no-print"><button class="button button--ghost" type="button" onclick="window.print()">Exportar PDF</button></p>';
       alvo.innerHTML = h;
+      ligarCard({ nome: p.nome, kicker: p.cargo + (p.municipio && p.casa === "prefeituras" ? " · " + p.municipio : ""),
+        linha: [p.partido, CASAS[p.casa]].filter(Boolean).join(" · "),
+        fotos: [p.pessoa ? "data/fotos/" + p.pessoa + ".webp" : "", p.foto].filter(Boolean), numeros: cr });
     }).catch(function (e) { erro(alvo, e); });
   }
 
@@ -719,12 +893,21 @@
 
   // ---------- rankings ----------
   function paginaRankings() {
-    var alvo = $("#rankings"), fCasa = $("#f-casa");
+    var alvo = $("#rankings"), cargos = $("#rk-cargos");
+    // Cada cargo tem regras e verbas próprias, então o ranking nunca mistura cargos.
+    var CARGOS_RK = { senado: "Senadores", camara: "Deputados federais", aleam: "Deputados estaduais", cmm: "Vereadores de Manaus", prefeituras: "Prefeitos" };
     carregar("politicos.json").then(function (pol) {
-      ORDEM_CASAS.forEach(function (c) {
-        if (pol.some(function (p) { return p.casa === c; })) fCasa.insertAdjacentHTML("beforeend", '<option value="' + c + '">' + esc(CASAS[c]) + "</option>");
+      var casas = ORDEM_CASAS.filter(function (c) { return CARGOS_RK[c] && pol.some(function (p) { return p.casa === c; }); });
+      var casa = casas.indexOf(param("casa")) >= 0 ? param("casa") : casas[0];
+      cargos.innerHTML = casas.map(function (c) {
+        return '<li><button type="button" data-c="' + c + '">' + esc(CARGOS_RK[c]) + " (" + pol.filter(function (p) { return p.casa === c; }).length + ")</button></li>";
+      }).join("");
+      cargos.addEventListener("click", function (e) {
+        var b = e.target.closest("button");
+        if (!b) return;
+        casa = b.getAttribute("data-c");
+        render();
       });
-      if (param("casa")) fCasa.value = param("casa");
 
       var pct100 = function (v) { return Math.round(v * 100) + "%"; };
       function cotaAno(p) { var a = ultimoAno(p.cota); return a ? p.cota[a] : null; }
@@ -776,15 +959,16 @@
         });
       }
 
-      function linha(x, casa) {
+      function linha(x) {
         return '<li><span><a href="politico.html?id=' + encodeURIComponent(x.p.id) + '">' + esc(x.p.nome) + '</a><span class="rk-sub">' +
-          esc([x.p.partido, casa ? "" : CASAS[x.p.casa]].filter(Boolean).join(" · ")) + '</span></span><span class="rk-v">' + x.fmt + "</span></li>";
+          esc([x.p.partido, x.p.casa === "prefeituras" ? x.p.municipio : ""].filter(Boolean).join(" · ")) + '</span></span><span class="rk-v">' + x.fmt + "</span></li>";
       }
       function render() {
-        var casa = fCasa.value;
+        [].forEach.call(cargos.querySelectorAll("button"), function (b) { b.setAttribute("aria-pressed", String(b.getAttribute("data-c") === casa)); });
+        history.replaceState(null, "", "?casa=" + casa + (grupoAtivo ? "&grupo=" + encodeURIComponent(grupoAtivo) : ""));
         if (abas) [].forEach.call(abas.querySelectorAll("button"), function (b) { b.setAttribute("aria-pressed", String(b.getAttribute("data-g") === grupoAtivo)); });
-        var base = pol.filter(function (p) { return !casa || p.casa === casa; });
-        alvo.innerHTML = GRUPOS.filter(function (g) { return !grupoAtivo || g === grupoAtivo; }).map(function (g) {
+        var base = pol.filter(function (p) { return p.casa === casa; });
+        alvo.innerHTML = '<p class="kicker" style="margin-top: var(--space-4);">' + esc(CARGOS_RK[casa]) + " · " + base.length + " no cargo</p>" + GRUPOS.filter(function (g) { return !grupoAtivo || g === grupoAtivo; }).map(function (g) {
           var cards = RANKINGS.filter(function (rk) { return rk.grupo === g; }).map(function (rk) {
             var itens = base.map(function (p) { return { p: p, v: rk.val(p) }; })
               .filter(function (x) { return x.v != null && !isNaN(x.v); })
@@ -793,14 +977,13 @@
               .map(function (x) { x.fmt = rk.fmt(x.v); return x; });
             if (!itens.length) return "";
             return '<article class="rk-card' + (rk.accent ? " rk-card--accent" : "") + '"><p class="kicker">' + esc(g) + "</p><h3>" + esc(rk.titulo) + '</h3><p class="muted">' + esc(rk.nota) + "</p>" +
-              '<ol class="rk-lista">' + itens.slice(0, 5).map(function (x) { return linha(x, casa); }).join("") + "</ol>" +
-              (itens.length > 5 ? '<details><summary>Ver do 6º ao ' + itens.length + 'º</summary><ol class="rk-lista" start="6" style="counter-reset: rk 5">' + itens.slice(5).map(function (x) { return linha(x, casa); }).join("") + "</ol></details>" : "") +
+              '<ol class="rk-lista">' + itens.slice(0, 5).map(linha).join("") + "</ol>" +
+              (itens.length > 5 ? '<details><summary>Ver do 6º ao ' + itens.length + 'º</summary><ol class="rk-lista" start="6" style="counter-reset: rk 5">' + itens.slice(5).map(linha).join("") + "</ol></details>" : "") +
               "</article>";
           }).join("");
           return cards ? '<section class="rk-grupo"><h2 class="h2">' + esc(g) + '</h2><div class="rk-grade">' + cards + "</div></section>" : "";
-        }).join("") || '<p class="muted">Nenhum ranking com dados para esse filtro.</p>';
+        }).join("") || '<p class="muted">Nenhum ranking com dados para esse cargo.</p>';
       }
-      fCasa.addEventListener("change", render);
       render();
     }).catch(function (e) { erro(alvo, e); });
   }
@@ -1170,7 +1353,218 @@
     }).catch(function () {});
   }
 
-  var paginas = { inicio: paginaInicio, politicos: paginaPoliticos, politico: paginaPolitico, leis: paginaLeis, rankings: paginaRankings, sobre: paginaSobre, gastos: paginaGastos, comparar: paginaComparar, diario: paginaDiario, municipio: paginaMunicipio, tribunais: paginaTribunais, campanhas: paginaCampanhas };
+  // ---------- partidos ----------
+  // Pesos do índice de poder: cada mandato vigente vale pontos pelo alcance do cargo.
+  var PESO_PODER = [
+    ["Governador(a)", 10], ["Senador(a)", 6], ["Prefeito(a) de Manaus", 6], ["Deputado(a) federal", 4], ["Vice-governador(a)", 3],
+    ["Deputado(a) estadual", 2], ["Prefeito(a), outros municípios", 2], ["Vereador(a) de Manaus", 1], ["Vereador(a), outros municípios", 0.25]
+  ];
+  function tipoMandato(p) {
+    if (p.casa === "prefeituras") return p.municipio === "Manaus" ? "Prefeito(a) de Manaus" : "Prefeito(a), outros municípios";
+    return p.cargo;
+  }
+  function siglaAtual(s, cfg) {
+    s = cfg.alias[s] || s;
+    while (cfg.sucessora[s]) s = cfg.sucessora[s];
+    return s;
+  }
+  // Junta mandatos vigentes, histórico e campanhas num resumo por partido.
+  function resumoPartidos(cfg, pol) {
+    var peso = {}, out = {};
+    PESO_PODER.forEach(function (x) { peso[x[0]] = x[1]; });
+    function novo(s) {
+      return out[s] = out[s] || { sigla: s, dados: cfg.partidos[s] || null, mandatos: [], porTipo: {}, pontos: 0, cota: 0, emendas: 0 };
+    }
+    Object.keys(cfg.partidos).forEach(novo);
+    pol.forEach(function (p) {
+      if (!p.partido) return;
+      var r = novo(siglaAtual(p.partido, cfg)), t = tipoMandato(p);
+      r.mandatos.push(p);
+      r.porTipo[t] = (r.porTipo[t] || 0) + 1;
+      r.pontos += peso[t] || 0;
+      r.cota += totalCota(p) || 0;
+      r.emendas += p.emendas ? p.emendas.pago || 0 : 0;
+    });
+    Object.keys(out).forEach(function (s) {
+      var r = out[s], vi = r.dados ? r.dados.vereadores_interior : 0;
+      if (vi) { r.porTipo["Vereador(a), outros municípios"] = vi; r.pontos += vi * peso["Vereador(a), outros municípios"]; }
+      r.vigentes = r.mandatos.length + vi;
+      var pa = r.dados ? r.dados.por_ano : {};
+      r.eleitosAno = function (a) { return pa[a] ? pa[a][1] : 0; };
+      var anosCamp = Object.keys(r.dados ? r.dados.campanha : {}).sort();
+      r.ultCamp = anosCamp.length ? [anosCamp[anosCamp.length - 1], r.dados.campanha[anosCamp[anosCamp.length - 1]]] : null;
+    });
+    var lista = Object.keys(out).map(function (s) { return out[s]; }).filter(function (r) { return r.vigentes || (r.dados && r.dados.candidaturas); });
+    lista.sort(function (a, b) { return b.pontos - a.pontos || b.vigentes - a.vigentes; });
+    lista.forEach(function (r, i) { r.posicao = r.pontos ? i + 1 : null; });
+    return lista;
+  }
+  function pontosFmt(v) { return v.toLocaleString("pt-BR", { maximumFractionDigits: 2 }); }
+
+  function paginaPartidos() {
+    var alvo = $("#partidos"), s = param("p");
+    Promise.all([carregar("partidos.json"), carregar("politicos.json")]).then(function (r) {
+      var cfg = r[0], lista = resumoPartidos(cfg, r[1]);
+      if (s) return paginaPartido(alvo, cfg, lista, s);
+      var anos = [];
+      lista.forEach(function (x) { Object.keys(x.dados ? x.dados.por_ano : {}).forEach(function (a) { if (anos.indexOf(a) < 0) anos.push(a); }); });
+      anos.sort().reverse();
+      var geral = anos.filter(function (a) { return +a % 4 === 2; })[0], mun = anos.filter(function (a) { return +a % 4 === 0; })[0];
+      var COLS = [
+        ["pontos", "Índice de poder", function (x) { return x.pontos; }, pontosFmt],
+        ["vigentes", "Mandatos vigentes", function (x) { return x.vigentes; }, num],
+        ["geral", "Eleitos em " + geral, function (x) { return x.eleitosAno(geral); }, num],
+        ["mun", "Eleitos em " + mun, function (x) { return x.eleitosAno(mun); }, num],
+        ["hist", "Eleitos desde 2000", function (x) { return x.dados ? x.dados.eleitos : 0; }, num],
+        ["camp", "Arrecadação na última campanha", function (x) { return x.ultCamp ? x.ultCamp[1][0] : 0; }, function (v, x) { return v ? reais(v) + ' <span class="ledger__sub">' + x.ultCamp[0] + "</span>" : "—"; }],
+        ["cota", "Cota gasta pelos mandatos atuais", function (x) { return x.cota; }, function (v) { return v ? reais(v) : "—"; }]
+      ];
+      alvo.innerHTML = '<form class="filtros" onsubmit="return false"><label><span>Ordenar por</span><select id="f-ordem">' +
+        COLS.map(function (c) { return '<option value="' + c[0] + '">' + esc(c[1]) + "</option>"; }).join("") + '</select></label></form><div id="pt-tabela"></div>' +
+        '<section class="section"><p class="kicker">Método</p><h2 class="h2">Como o índice de poder é calculado</h2>' +
+        '<p class="prose">Cada mandato vigente soma pontos conforme o alcance do cargo. O partido de cada político é o atual, informado pela casa legislativa ou pelo governo. Vereadores fora de Manaus entram pelo partido com que foram eleitos em ' + esc(cfg.ano_municipal) + '. Siglas extintas ou renomeadas contam para a sucessora (por exemplo, PMDB para MDB, e DEM e PSL para União).</p>' +
+        '<ul class="ledger">' + PESO_PODER.map(function (x) { return '<li><span class="ledger__key">' + pontosFmt(x[1]) + (x[1] === 1 ? " ponto" : " pontos") + "</span><span>" + esc(x[0]) + "</span></li>"; }).join("") + "</ul>" +
+        '<p class="muted">Os pesos são uma escolha editorial do Almanaque. As outras colunas permitem comparar sem eles. Fonte: TSE (candidaturas desde 2000 e prestação de contas desde 2018), casas legislativas e governo.</p></section>';
+      var sel = $("#f-ordem");
+      if (COLS.some(function (c) { return c[0] === param("ordem"); })) sel.value = param("ordem");
+      function render() {
+        var col = COLS.filter(function (c) { return c[0] === sel.value; })[0];
+        history.replaceState(null, "", "?ordem=" + col[0]);
+        var l = lista.slice().sort(function (a, b) { return col[2](b) - col[2](a); });
+        var mx = col[2](l[0]) || 1;
+        $("#pt-tabela").innerHTML = '<div class="tabela-wrap"><table class="tabela"><thead><tr><th>#</th><th>Partido</th>' +
+          COLS.map(function (c) { return '<th class="num">' + esc(c[1]) + "</th>"; }).join("") + "</tr></thead><tbody>" +
+          l.map(function (x, i) {
+            return "<tr><td>" + (i + 1) + '</td><td><a href="partidos.html?p=' + encodeURIComponent(x.sigla) + '"><strong>' + esc(x.sigla) + "</strong></a>" +
+              (x.dados && x.dados.siglas.length > 1 ? '<span class="ledger__sub">' + esc(x.dados.siglas.filter(function (g) { return g !== x.sigla; }).join(", ")) + "</span>" : "") +
+              '<span class="pt-barra" style="width:' + Math.max(col[2](x) / mx * 100, 0) + '%"></span></td>' +
+              COLS.map(function (c) { return '<td class="num">' + c[3](c[2](x), x) + "</td>"; }).join("") + "</tr>";
+          }).join("") + "</tbody></table></div>";
+      }
+      sel.addEventListener("change", render);
+      render();
+    }).catch(function (e) { erro(alvo, e); });
+  }
+
+  function paginaPartido(alvo, cfg, lista, s) {
+    var x = lista.filter(function (r) { return r.sigla === s; })[0] || lista.filter(function (r) { return r.sigla === siglaAtual(s, cfg); })[0];
+    if (!x) { alvo.innerHTML = '<p class="aviso">Partido não encontrado. <a href="partidos.html">Ver todos os partidos</a>.</p>'; return; }
+    var d = x.dados || { siglas: [x.sigla], candidaturas: 0, eleitos: 0, por_ano: {}, por_cargo: {}, campanha: {}, slug: slugJS(x.sigla) };
+    document.title = x.sigla + " · Partidos · Almanaque do Poder";
+    var antigas = d.siglas.filter(function (g) { return g !== x.sigla; });
+    var anos = Object.keys(d.por_ano).sort().reverse();
+    var hero = $(".hero");
+    hero.innerHTML = '<p class="kicker"><a href="partidos.html">Partidos</a></p><h1 class="display">' + esc(x.sigla) + "</h1>" +
+      '<p class="lede">' + (antigas.length ? "Inclui o histórico de " + esc(antigas.join(", ")) + ", siglas antigas ou incorporadas. " : "") +
+      (anos.length ? "Candidaturas no Amazonas desde " + anos[anos.length - 1] + "." : "Sem candidaturas registradas no histórico do TSE.") + "</p>";
+    var h = '<p class="no-print acoes-perfil"><button class="button button--ghost" type="button" onclick="window.print()">Exportar PDF</button></p>';
+    var cr = [];
+    if (x.posicao) cr.push([x.posicao + "º", "no índice de poder (" + pontosFmt(x.pontos) + " pontos)"]);
+    cr.push([num(x.vigentes), "mandatos vigentes"]);
+    cr.push([num(d.eleitos), "eleitos desde " + (anos[anos.length - 1] || "2000")]);
+    cr.push([num(d.candidaturas), "candidaturas"]);
+    if (anos[0]) cr.push([num(d.por_ano[anos[0]][2]), "votos nominais em " + anos[0]]);
+    if (x.ultCamp) cr.push([reais(x.ultCamp[1][0]), "arrecadados pelos candidatos em " + x.ultCamp[0]]);
+    h += crachaHTML(cr);
+
+    // Mandatos vigentes
+    h += '<section class="section"><p class="kicker">Com mandato</p><h2 class="h2">Quem exerce mandato pelo partido</h2>';
+    if (!x.vigentes) h += '<p class="prose">Nenhum mandato vigente registrado.</p>';
+    else {
+      h += barras(x.porTipo, num, "", 12);
+      var porTipo = {};
+      x.mandatos.forEach(function (p) { (porTipo[tipoMandato(p)] = porTipo[tipoMandato(p)] || []).push(p); });
+      PESO_PODER.forEach(function (t) {
+        var l = porTipo[t[0]];
+        if (!l) return;
+        h += '<h3 class="eleitos__cargo" style="margin-top: var(--space-4);">' + esc(t[0]) + " (" + l.length + ')</h3><ul class="ledger">' + l.map(function (p) {
+          return '<li><span class="ledger__key">' + esc(p.casa === "prefeituras" ? p.municipio : CASAS[p.casa] || "") + '</span><span><a href="politico.html?id=' + encodeURIComponent(p.id) + '">' + esc(p.nome) + "</a></span></li>";
+        }).join("") + "</ul>";
+      });
+      if (d.vereadores_interior) h += '<div id="pt-vereadores"></div>';
+    }
+    h += "</section>";
+
+    // Histórico
+    if (anos.length) {
+      var eleitosAno = {};
+      anos.slice().reverse().forEach(function (a) { eleitosAno[a] = d.por_ano[a][1]; });
+      h += '<section class="section"><p class="kicker">Histórico</p><h2 class="h2">Eleição a eleição</h2>' +
+        '<h3 class="eleitos__cargo">Eleitos por ano</h3>' + colunas(eleitosAno, num) +
+        '<div class="tabela-wrap" style="margin-top: var(--space-3);"><table class="tabela"><thead><tr><th>Ano</th><th>Sigla usada</th><th class="num">Candidaturas</th><th class="num">Eleitos</th><th class="num">Votos nominais</th></tr></thead><tbody>' +
+        anos.map(function (a) { var v = d.por_ano[a]; return "<tr><td>" + a + "</td><td>" + esc(v[3].join(", ")) + '</td><td class="num">' + num(v[0]) + '</td><td class="num">' + num(v[1]) + '</td><td class="num">' + num(v[2]) + "</td></tr>"; }).join("") +
+        "</tbody></table></div>" +
+        '<h3 class="eleitos__cargo" style="margin-top: var(--space-4);">Por cargo</h3><div class="tabela-wrap"><table class="tabela"><thead><tr><th>Cargo</th><th class="num">Candidaturas</th><th class="num">Eleitos</th><th class="num">Taxa de vitória</th></tr></thead><tbody>' +
+        Object.keys(d.por_cargo).sort(function (a, b) { return d.por_cargo[b][0] - d.por_cargo[a][0]; }).map(function (c) {
+          var v = d.por_cargo[c];
+          return "<tr><td>" + esc(c) + '</td><td class="num">' + num(v[0]) + '</td><td class="num">' + num(v[1]) + '</td><td class="num">' + pct(v[1], v[0]) + "</td></tr>";
+        }).join("") + "</tbody></table></div>" +
+        '<p class="muted">Fonte: TSE, candidaturas no Amazonas desde 2000. Os arquivos do TSE de 2000 e 2004 não marcam a maior parte dos vereadores eleitos, então esses anos aparecem com menos eleitos.</p></section>';
+    }
+
+    // Dinheiro
+    var anosC = Object.keys(d.campanha).sort().reverse();
+    if (anosC.length || x.cota || x.emendas) {
+      h += '<section class="section"><p class="kicker">Dinheiro</p><h2 class="h2">Campanhas e gastos dos mandatos</h2>';
+      if (x.cota || x.emendas) {
+        h += '<ul class="pillars">' +
+          (x.cota ? '<li class="pillar"><span class="pillar__index pillar__index--valor">' + reais(x.cota) + '</span><p class="pillar__text">de cota parlamentar gasta pelos mandatos atuais do partido, desde 2023</p></li>' : "") +
+          (x.emendas ? '<li class="pillar"><span class="pillar__index pillar__index--accent pillar__index--valor">' + reais(x.emendas) + '</span><p class="pillar__text">em emendas pagas a deputados federais e senadores do partido</p></li>' : "") + "</ul>";
+        var porCota = {};
+        x.mandatos.forEach(function (p) { var t = totalCota(p); if (t) porCota[p.nome] = t; });
+        var ord = {};
+        Object.keys(porCota).sort(function (a, b) { return porCota[b] - porCota[a]; }).forEach(function (k) { ord[k] = porCota[k]; });
+        if (Object.keys(ord).length) h += '<h3 class="eleitos__cargo" style="margin-top: var(--space-4);">Cota parlamentar por político</h3>' + barras(ord, reais, "barras--reais", 15);
+      }
+      if (anosC.length) {
+        h += '<h3 class="eleitos__cargo" style="margin-top: var(--space-4);">Campanhas dos candidatos do partido</h3><div class="tabela-wrap"><table class="tabela"><thead><tr><th>Ano</th><th class="num">Campanhas com contas</th><th class="num">Arrecadado</th><th class="num">Dinheiro público</th><th class="num">Gasto contratado</th></tr></thead><tbody>' +
+          anosC.map(function (a) { var v = d.campanha[a]; return "<tr><td>" + a + '</td><td class="num">' + num(v[3]) + '</td><td class="num">' + reais(v[0]) + '</td><td class="num">' + pct(v[1], v[0]) + '</td><td class="num">' + reais(v[2]) + "</td></tr>"; }).join("") +
+          '</tbody></table></div><p class="muted">Fonte: TSE, prestação de contas dos candidatos (2018 em diante). Não inclui as contas dos diretórios partidários. Dinheiro público é fundo eleitoral e fundo partidário.</p>';
+      }
+      h += "</section>";
+    }
+    h += '<section class="section" id="pt-eleitos"><p class="kicker">Eleitos</p><h2 class="h2">Todos os eleitos pelo partido</h2><p class="muted">Carregando…</p></section>';
+    alvo.innerHTML = h;
+
+    carregar("partidos/" + d.slug + ".json").catch(function () { return []; }).then(function (el) {
+      var box = $("#pt-vereadores");
+      if (box) {
+        var v = el.filter(function (e) { return e[4] === cfg.ano_municipal && e[2] === "Vereador" && e[3] !== "Manaus"; }), porMun = {};
+        v.forEach(function (e) { (porMun[e[3]] = porMun[e[3]] || []).push(e); });
+        box.outerHTML = '<h3 class="eleitos__cargo" style="margin-top: var(--space-4);">Vereador(a), outros municípios (' + v.length + ")</h3>" +
+          "<details><summary>Ver os eleitos em " + cfg.ano_municipal + ' por município</summary><ul class="ledger">' + Object.keys(porMun).sort(function (a, b) { return a.localeCompare(b, "pt"); }).map(function (m) {
+            return '<li><span class="ledger__key">' + esc(m) + "</span><span>" + porMun[m].map(function (e) { return '<a href="politico.html?id=' + encodeURIComponent(e[0]) + '">' + esc(e[1]) + "</a>"; }).join(", ") + "</span></li>";
+          }).join("") + '</ul></details><p class="muted">Partido com que foram eleitos. Câmaras do interior não publicam trocas de partido em formato aberto.</p>';
+      }
+      var sec = $("#pt-eleitos");
+      if (!el.length) { sec.outerHTML = ""; return; }
+      var cargos = Array.from(new Set(el.map(function (e) { return e[2]; }))).sort();
+      var anosE = Array.from(new Set(el.map(function (e) { return e[4]; }))).sort().reverse();
+      sec.innerHTML = '<p class="kicker">Eleitos</p><h2 class="h2">Todos os eleitos pelo partido (' + num(el.length) + ")</h2>" +
+        '<form class="filtros" onsubmit="return false"><label><span>Cargo</span><select id="pe-cargo"><option value="">Todos</option>' + cargos.map(function (c) { return '<option value="' + esc(c) + '">' + esc(c) + "</option>"; }).join("") + "</select></label>" +
+        '<label><span>Ano</span><select id="pe-ano"><option value="">Todos</option>' + anosE.map(function (a) { return '<option value="' + a + '">' + a + "</option>"; }).join("") + "</select></label>" +
+        '<label><span>Nome ou município</span><input id="pe-busca" type="search"></label></form>' +
+        '<div class="tabela-wrap"><table class="tabela"><thead><tr><th>Ano</th><th>Nome</th><th>Cargo</th><th>Onde</th><th>Sigla</th><th class="num">Votos</th></tr></thead><tbody id="pe-corpo"></tbody></table></div>' +
+        '<p class="no-print"><button class="button button--ghost" type="button" id="pe-mais">Mostrar mais</button></p>';
+      var limite = 100, fC = $("#pe-cargo"), fA = $("#pe-ano"), fB = $("#pe-busca");
+      function render() {
+        var b = semAcento(fB.value);
+        var f = el.filter(function (e) { return (!fC.value || e[2] === fC.value) && (!fA.value || e[4] === +fA.value) && (!b || semAcento(e[1] + " " + e[3]).indexOf(b) >= 0); });
+        $("#pe-corpo").innerHTML = f.slice(0, limite).map(function (e) {
+          return "<tr><td>" + e[4] + '</td><td><a href="politico.html?id=' + encodeURIComponent(e[0]) + '">' + esc(e[1]) + "</a></td><td>" + esc(e[2]) + "</td><td>" + esc(e[3]) + "</td><td>" + esc(e[6]) + '</td><td class="num">' + (e[5] ? num(e[5]) : "—") + "</td></tr>";
+        }).join("") || '<tr><td colspan="6" class="muted">Nenhum eleito com esses filtros.</td></tr>';
+        $("#pe-mais").hidden = f.length <= limite;
+      }
+      [fC, fA].forEach(function (el2) { el2.addEventListener("change", function () { limite = 100; render(); }); });
+      fB.addEventListener("input", function () { limite = 100; render(); });
+      $("#pe-mais").addEventListener("click", function () { limite += 200; render(); });
+      // No PDF a lista sai inteira, sem filtros
+      window.addEventListener("beforeprint", function () { fC.value = fA.value = fB.value = ""; limite = 1e6; render(); });
+      render();
+    });
+  }
+
+  var paginas = { inicio: paginaInicio, partidos: paginaPartidos, politicos: paginaPoliticos, politico: paginaPolitico, leis: paginaLeis, rankings: paginaRankings, sobre: paginaSobre, gastos: paginaGastos, comparar: paginaComparar, diario: paginaDiario, municipio: paginaMunicipio, tribunais: paginaTribunais, campanhas: paginaCampanhas };
   var atual = document.body.getAttribute("data-page");
   if (paginas[atual]) paginas[atual]();
   atualizacao();
