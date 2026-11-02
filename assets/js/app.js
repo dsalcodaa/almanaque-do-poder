@@ -595,12 +595,10 @@
 
   function paginaPolitico() {
     var alvo = $("#perfil"), id = param("id");
-    if (id && id.indexOf("tse-") === 0) {
-      carregar("politicos.json").then(function (pol) { paginaPessoa(alvo, id, pol); }).catch(function (e) { erro(alvo, e); });
-      return;
-    }
     Promise.all([carregar("politicos.json"), carregar("normas.json")]).then(function (r) {
       var p = r[0].find(function (x) { return x.id === id; });
+      // Prefeitos também têm id "tse-" (número da candidatura); só cai no histórico quem não tem mandato
+      if (!p && id && id.indexOf("tse-") === 0) return paginaPessoa(alvo, id, r[0]);
       if (!p) { alvo.innerHTML = '<p class="aviso">Político não encontrado. <a href="politicos.html">Voltar para a lista</a>.</p>'; return; }
       document.title = p.nome + " · Almanaque do Poder";
       if (p.pessoa) {
