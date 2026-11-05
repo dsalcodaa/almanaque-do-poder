@@ -1205,14 +1205,41 @@
       Object.keys(mun).forEach(function (k) { fMun.insertAdjacentHTML("beforeend", '<option value="' + esc(k) + '">' + esc(mun[k].nome) + "</option>"); });
       fMun.value = param("m") && mun[param("m")] ? param("m") : "manaus";
       function pessoaLink(x) { return '<a href="politico.html?id=' + encodeURIComponent(x.pessoa) + '">' + esc(x.nome) + "</a>"; }
+      function cardEleito(v, meta) {
+        return '<li><a class="card" href="politico.html?id=' + encodeURIComponent(v.pessoa) + '">' + foto({ nome: v.nome, foto: "data/fotos/" + v.pessoa + ".webp" }) +
+          '<span class="card__corpo"><span class="card__nome">' + esc(v.nome) + '</span><span class="card__meta">' + esc(meta) + '</span><span class="card__partido">' + esc(v.partido || "") + "</span></span></a></li>";
+      }
+      // Eleitos de uma eleição antiga: o mandato municipal começa no ano seguinte e dura 4 anos
+      function eleicaoHTML(m, a) {
+        var e = m.eleicoes[a], ini = +a + 1, votos = function (v) { return [v.votos ? num(v.votos) + " votos" : "", v.suplementar ? "eleição suplementar" : ""].filter(Boolean).join(" · "); };
+        var h = '<section class="section"><p class="kicker">Eleição de ' + a + '</p><h2 class="h2">Mandato ' + ini + "–" + (ini + 3) + "</h2>" +
+          '<h3 class="eleitos__cargo">Prefeito(a) e vice</h3>';
+        h += e.prefeito.length || e.vice.length
+          ? '<ul class="cards">' + e.prefeito.map(function (v) { return cardEleito(v, ["Prefeito(a)", votos(v)].filter(Boolean).join(" · ")); }).join("") +
+            e.vice.map(function (v) { return cardEleito(v, "Vice-prefeito(a)" + (v.suplementar ? " · eleição suplementar" : "")); }).join("") + "</ul>"
+          : '<p class="prose">Sem registro de prefeito eleito nos arquivos do TSE.</p>';
+        h += '<h3 class="eleitos__cargo" style="margin-top: var(--space-4);">Vereadores eleitos (' + e.vereadores.length + ")</h3>";
+        h += e.vereadores.length
+          ? '<ul class="cards">' + e.vereadores.slice().sort(function (x, y) { return (y.votos || 0) - (x.votos || 0); }).map(function (v) { return cardEleito(v, votos(v) || "Vereador(a)"); }).join("") + "</ul>"
+          : '<p class="prose">Sem registro de vereadores eleitos nos arquivos do TSE.</p>';
+        return h + '<p class="muted">Fonte: TSE, resultado da eleição de ' + a + (e.prefeito.some(function (v) { return v.suplementar; }) ? " e da eleição suplementar do mesmo ciclo" : "") + ". " + num(e.candidatos) + " candidaturas no município. Cassações, renúncias e posses de suplentes depois da eleição não aparecem.</p></section>";
+      }
+      var abaAno = param("ano") || "";
       function render() {
         var k = fMun.value, m = mun[k];
-        history.replaceState(null, "", "municipio.html?m=" + k);
-        document.title = m.nome + " · Almanaque do Poder";
         var anos = Object.keys(m.eleicoes).sort().reverse(), ult = m.eleicoes[anos[0]];
+        if (anos.indexOf(abaAno) < 0) abaAno = "";
+        history.replaceState(null, "", "municipio.html?m=" + k + (abaAno ? "&ano=" + abaAno : ""));
+        document.title = m.nome + " · Almanaque do Poder";
         var prefeito = pol.filter(function (p) { return p.casa === "prefeituras" && slugJS(p.municipio || "") === k; });
         var vereadoresAtuais = k === "manaus" ? pol.filter(function (p) { return p.casa === "cmm"; }) : null;
-        var h = '<section class="section"><p class="kicker">Em exercício</p><h2 class="h2">' + esc(m.nome) + " hoje</h2>";
+        var abas = '<ul class="rk-abas rk-abas--cargo no-print" id="mun-abas" aria-label="Mandatos"><li><button type="button" data-ano="" aria-pressed="' + !abaAno + '">Em exercício</button></li>' +
+          anos.map(function (a) { return '<li><button type="button" data-ano="' + a + '" aria-pressed="' + (a === abaAno) + '">Eleição ' + a + "</button></li>"; }).join("") + "</ul>";
+        if (abaAno) {
+          alvo.innerHTML = abas + eleicaoHTML(m, abaAno);
+          return;
+        }
+        var h = abas + '<section class="section"><p class="kicker">Em exercício</p><h2 class="h2">' + esc(m.nome) + " hoje</h2>";
         h += '<ul class="cards">' + prefeito.map(function (p) {
           return '<li><a class="card" href="politico.html?id=' + encodeURIComponent(p.id) + '">' + foto(p) + '<span class="card__corpo"><span class="card__nome">' + esc(p.nome) + '</span><span class="card__meta">' + esc(p.cargo) + '</span><span class="card__partido">' + esc(p.partido || "") + "</span></span></a></li>";
         }).join("") + (ult && ult.vice.length ? ult.vice.map(function (v) {
@@ -1236,7 +1263,7 @@
           e.vereadores.forEach(function (v) { partidos[v.partido || "?"] = (partidos[v.partido || "?"] || 0) + 1; });
           var ordem = Object.keys(partidos).sort(function (x, y) { return partidos[y] - partidos[x]; });
           return '<li class="linha__item"><span class="linha__ano">' + a + '</span><div class="linha__corpo">' +
-            '<p class="linha__pref"><strong>Prefeito(a):</strong> ' + (e.prefeito.length ? e.prefeito.map(function (x) { return pessoaLink(x) + " (" + esc(x.partido || "") + (x.votos ? ", " + num(x.votos) + " votos" : "") + ")"; }).join("; ") : "sem registro de eleito") +
+            '<p class="linha__pref"><strong>Prefeito(a):</strong> ' + (e.prefeito.length ? e.prefeito.map(function (x) { return pessoaLink(x) + " (" + esc(x.partido || "") + (x.votos ? ", " + num(x.votos) + " votos" : "") + (x.suplementar ? ", eleição suplementar" : "") + ")"; }).join("; ") : "sem registro de eleito") +
             (e.vice.length ? ' · <span class="muted">vice: ' + e.vice.map(pessoaLink).join("; ") + "</span>" : "") + "</p>" +
             '<p class="linha__camara"><strong>Câmara:</strong> ' + e.vereadores.length + " vereadores · " + num(e.candidatos) + " candidaturas</p>" +
             '<p class="linha__partidos">' + ordem.map(function (pt) { return '<span class="tag">' + esc(pt) + " " + partidos[pt] + "</span>"; }).join(" ") + "</p>" +
@@ -1267,7 +1294,13 @@
             '<p><a class="button button--ghost" href="leis.html?aba=acervo&m=' + k + '">Ver todas as leis de ' + esc(m.nome) + "</a></p></section>";
         }).catch(function () {});
       }
-      fMun.addEventListener("change", render);
+      fMun.addEventListener("change", function () { abaAno = ""; render(); });
+      alvo.addEventListener("click", function (e) {
+        var b = e.target.closest("#mun-abas button");
+        if (!b) return;
+        abaAno = b.getAttribute("data-ano");
+        render();
+      });
       render();
     }).catch(function (e) { erro(alvo, e); });
   }

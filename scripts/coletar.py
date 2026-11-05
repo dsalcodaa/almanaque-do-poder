@@ -1361,7 +1361,11 @@ def chave_sq(r: dict, ano: int) -> str:
     Em 2000 e 2004 o SQ_CANDIDATO só é único dentro do município, então a chave leva o código do
     município (SG_UE). De 2006 em diante ele é único no estado e a chave é o próprio SQ."""
     sq = r.get("SQ_CANDIDATO") or ""
-    return f"{r.get('SG_UE')}-{int(sq)}" if ano < 2006 and sq.isdigit() else sq
+    if ano >= 2006 or not sq.isdigit():
+        return sq
+    # As eleições suplementares repetem números da eleição normal no mesmo município
+    supl = f"-{r.get('CD_ELEICAO')}" if "SUPLEMENTAR" in (r.get("DS_ELEICAO") or "").upper() else ""
+    return f"{r.get('SG_UE')}-{int(sq)}{supl}"
 
 
 def votos_nominais(v: dict) -> int:
@@ -1373,6 +1377,12 @@ def votos_nominais(v: dict) -> int:
         except ValueError:
             return 0
     return n("QT_VOTOS_NOMINAIS") or n("QT_VOTOS_NOMINAIS_VALIDOS")
+
+
+def eleito_tse(situacao: str | None) -> bool:
+    """Resultado do TSE que significa eleito. Em 2004 e 2008, quem entrou por média aparece só como "MÉDIA"."""
+    s = (situacao or "").strip().upper()
+    return s.startswith("ELEITO") or s in ("MÉDIA", "MEDIA")
 
 
 def coletar_tse_historico() -> dict:
@@ -1414,18 +1424,42 @@ def coletar_tse_historico() -> dict:
             k = chave_sq(x, ano)
             if k not in por_sq or x.get("NR_TURNO", "1") > por_sq[k].get("NR_TURNO", "1"):
                 por_sq[k] = x
+        # Chapas vencedoras (município + número). Até 2008 o TSE não marca o resultado do vice:
+        # ele é eleito junto com o titular da mesma chapa.
+        # Em 2000 o número do vice é outro, então a ligação usa a coligação ou, sem coligação, o partido.
+        def chapa(x):
+            col = x.get("SQ_COLIGACAO") or "-1"
+            ue = (x.get("SG_UE"), x.get("CD_ELEICAO"))  # o arquivo do ano também traz as eleições suplementares
+            return [ue + ("n", x.get("NR_CANDIDATO")),
+                    ue + ("c", col) if col != "-1" else ue + ("p", x.get("SG_PARTIDO"))]
+        chapas = {k for x in por_sq.values()
+                  if x["DS_CARGO"] in ("PREFEITO", "GOVERNADOR") and eleito_tse(x.get("DS_SIT_TOT_TURNO")) for k in chapa(x)}
+        # Chapas que já têm o vice marcado como eleito não precisam de inferência
+        com_vice = {k for x in por_sq.values()
+                    if x["DS_CARGO"] in ("VICE-PREFEITO", "VICE-GOVERNADOR") and eleito_tse(x.get("DS_SIT_TOT_TURNO")) for k in chapa(x)}
+        chapas -= com_vice
         for sq, x in por_sq.items():
             nasc = x.get("DT_NASCIMENTO") or ""
             if nasc.startswith("#"):
                 nasc = ""
             pid = id_pessoa(x["NM_CANDIDATO"], nasc)
             v1, v2 = votos.get((sq, "1")), votos.get((sq, "2"))
-            situacao = (x.get("DS_SIT_TOT_TURNO") or "").replace("#NULO#", "").strip()
+            situacao = (x.get("DS_SIT_TOT_TURNO") or "").strip()
+            if situacao.startswith("#"):  # #NULO#, #NULO, #NE
+                situacao = ""
+            if not situacao and x["DS_CARGO"] in ("VICE-PREFEITO", "VICE-GOVERNADOR"):
+                k = chapa(x)
+                invalida = re.search(r"FALEC|INAPTO|CANCEL|REN[UÚ]N|INDEFER|CASSA|NEGAD|SUBSTITU[IÍ]D",
+                                     (x.get("DS_SITUACAO_CANDIDATURA") or "") + " " + (x.get("DS_DETALHE_SITUACAO_CAND") or ""))
+                if not invalida and (k[0] in chapas or (ano == 2000 and k[1] in chapas)):
+                    situacao = "ELEITO"
             municipal = x["DS_CARGO"] in ("PREFEITO", "VICE-PREFEITO", "VEREADOR")
             c = {"ano": ano, "cargo": titulo(x["DS_CARGO"]), "ue": titulo(x["NM_UE"]) if municipal else "Amazonas",
-                 "partido": x.get("SG_PARTIDO"), "numero": x.get("NR_CANDIDATO"), "urna": titulo(x.get("NM_URNA_CANDIDATO") or ""),
+                 "partido": x.get("SG_PARTIDO"), "numero": x.get("NR_CANDIDATO"), "urna": titulo("" if (x.get("NM_URNA_CANDIDATO") or "#").startswith("#") else x["NM_URNA_CANDIDATO"]),
                  "situacao": titulo(situacao) or titulo(x.get("DS_SITUACAO_CANDIDATURA") or ""),
-                 "eleito": situacao.startswith("ELEITO"), "votos": v2 or v1, "patrimonio": round(bens[sq], 2) if sq in bens else None}
+                 "eleito": eleito_tse(situacao), "votos": v2 or v1, "patrimonio": round(bens[sq], 2) if sq in bens else None}
+            if "SUPLEMENTAR" in (x.get("DS_ELEICAO") or "").upper():
+                c["suplementar"] = True
             pe = pessoas.setdefault(pid, {"id": pid, "nome": titulo(x["NM_CANDIDATO"]), "nascimento": nasc or None,
                                           "candidaturas": [], "foto": None, "_foto_ano": 0})
             pe["candidaturas"].append(c)
@@ -1441,7 +1475,8 @@ def coletar_tse_historico() -> dict:
                 e["candidatos"] += 1
                 if c["eleito"]:
                     alvo = {"PREFEITO": "prefeito", "VICE-PREFEITO": "vice"}.get(x["DS_CARGO"], "vereadores")
-                    e[alvo].append({"pessoa": pid, "nome": c["urna"] or pe["nome"], "partido": c["partido"], "votos": c["votos"]})
+                    e[alvo].append({"pessoa": pid, "nome": c["urna"] or pe["nome"], "partido": c["partido"], "votos": c["votos"],
+                                    **({"suplementar": True} if c.get("suplementar") else {})})
         log(f"[tse_historico] {ano}: {len(por_sq)} candidaturas, {len(fotos)} fotos")
 
     # Fotos: a mais recente de cada pessoa, reduzida para 96 x 120 em WebP
