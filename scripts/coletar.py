@@ -1355,6 +1355,26 @@ def ler_cache_csv(nome: str):
         return list(csv.DictReader(f, delimiter=";"))
 
 
+def chave_sq(r: dict, ano: int) -> str:
+    """Chave do candidato nos arquivos do TSE.
+
+    Em 2000 e 2004 o SQ_CANDIDATO só é único dentro do município, então a chave leva o código do
+    município (SG_UE). De 2006 em diante ele é único no estado e a chave é o próprio SQ."""
+    sq = r.get("SQ_CANDIDATO") or ""
+    return f"{r.get('SG_UE')}-{int(sq)}" if ano < 2006 and sq.isdigit() else sq
+
+
+def votos_nominais(v: dict) -> int:
+    """Votos nominais de uma linha de votacao_candidato_munzona. No arquivo de 2000 o TSE deixou
+    QT_VOTOS_NOMINAIS zerado e publicou os votos só em QT_VOTOS_NOMINAIS_VALIDOS."""
+    def n(c):
+        try:
+            return int(v.get(c) or 0)
+        except ValueError:
+            return 0
+    return n("QT_VOTOS_NOMINAIS") or n("QT_VOTOS_NOMINAIS_VALIDOS")
+
+
 def coletar_tse_historico() -> dict:
     """Todas as candidaturas do Amazonas de 2000 em diante: pessoas, histórico, fotos e câmaras por eleição.
 
@@ -1374,10 +1394,10 @@ def coletar_tse_historico() -> dict:
             x["NM_UE"] = NOMES_UE.get(x["NM_UE"], x["NM_UE"])
         bens = Counter()
         for b in ler_cache_csv(f"bem_candidato_{ano}_AM.csv"):
-            bens[b["SQ_CANDIDATO"]] += float((b.get("VR_BEM_CANDIDATO") or "0").replace(",", ".") or 0)
+            bens[chave_sq(b, ano)] += float((b.get("VR_BEM_CANDIDATO") or "0").replace(",", ".") or 0)
         votos = Counter()
         for v in ler_cache_csv(f"votacao_candidato_munzona_{ano}_AM.csv"):
-            votos[(v["SQ_CANDIDATO"], v["NR_TURNO"])] += int(v.get("QT_VOTOS_NOMINAIS") or 0)
+            votos[(chave_sq(v, ano), v["NR_TURNO"])] += votos_nominais(v)
         fotos = {}
         pasta = CACHE / "fotos" / str(ano)
         if pasta.exists():
@@ -1385,11 +1405,15 @@ def coletar_tse_historico() -> dict:
                 m = re.match(r"F?AM(\d+)_div\.", f.name, re.I)
                 if m:
                     fotos[m.group(1)] = f
+                m = re.match(r"F?AM(\d{5})_(\d+)_div\.", f.name, re.I)  # 2000 e 2004: município + SQ
+                if m:
+                    fotos[f"{m.group(1)}-{int(m.group(2))}"] = f
         # Uma linha por candidato (a do último turno disputado)
         por_sq = {}
         for x in cand:
-            if x["SQ_CANDIDATO"] not in por_sq or x.get("NR_TURNO", "1") > por_sq[x["SQ_CANDIDATO"]].get("NR_TURNO", "1"):
-                por_sq[x["SQ_CANDIDATO"]] = x
+            k = chave_sq(x, ano)
+            if k not in por_sq or x.get("NR_TURNO", "1") > por_sq[k].get("NR_TURNO", "1"):
+                por_sq[k] = x
         for sq, x in por_sq.items():
             nasc = x.get("DT_NASCIMENTO") or ""
             if nasc.startswith("#"):
@@ -1521,9 +1545,9 @@ def mapa_sq(ano: int) -> tuple[dict, dict]:
     for x in ler_cache_csv(f"consulta_cand_{ano}_AM.csv"):
         nasc = x.get("DT_NASCIMENTO") or ""
         ue = NOMES_UE.get(x.get("NM_UE") or "", x.get("NM_UE") or "")
-        por_sq[x["SQ_CANDIDATO"]] = (id_pessoa(x["NM_CANDIDATO"], "" if nasc.startswith("#") else nasc),
-                                     x.get("NM_URNA_CANDIDATO") or x["NM_CANDIDATO"], titulo(ue))
-        por_numero[(x.get("SG_UE"), x.get("CD_CARGO"), x.get("NR_CANDIDATO"))] = x["SQ_CANDIDATO"]
+        por_sq[chave_sq(x, ano)] = (id_pessoa(x["NM_CANDIDATO"], "" if nasc.startswith("#") else nasc),
+                                    x.get("NM_URNA_CANDIDATO") or x["NM_CANDIDATO"], titulo(ue))
+        por_numero[(x.get("SG_UE"), x.get("CD_CARGO"), x.get("NR_CANDIDATO"))] = chave_sq(x, ano)
     return por_sq, por_numero
 
 
@@ -1744,9 +1768,9 @@ def coletar_votos_territorio() -> dict:
             continue
         mun: dict = defaultdict(Counter)
         for v in ler_cache_csv(f"votacao_candidato_munzona_{ano}_AM.csv"):
-            if v.get("NR_TURNO") == "1" and v.get("SQ_CANDIDATO") in por_sq:
+            if v.get("NR_TURNO") == "1" and chave_sq(v, ano) in por_sq:
                 nome = titulo(NOMES_UE.get(v.get("NM_MUNICIPIO") or "", v.get("NM_MUNICIPIO") or ""))
-                mun[v["SQ_CANDIDATO"]][nome] += int(v.get("QT_VOTOS_NOMINAIS") or 0)
+                mun[chave_sq(v, ano)][nome] += votos_nominais(v)
         bairros: dict = {}
         if ano >= 2018:
             try:

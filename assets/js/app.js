@@ -1498,7 +1498,7 @@
           var v = d.por_cargo[c];
           return "<tr><td>" + esc(c) + '</td><td class="num">' + num(v[0]) + '</td><td class="num">' + num(v[1]) + '</td><td class="num">' + pct(v[1], v[0]) + "</td></tr>";
         }).join("") + "</tbody></table></div>" +
-        '<p class="muted">Fonte: TSE, candidaturas no Amazonas desde 2000. Os arquivos do TSE de 2000 e 2004 não marcam a maior parte dos vereadores eleitos, então esses anos aparecem com menos eleitos.</p></section>';
+        '<p class="muted">Fonte: TSE, candidaturas no Amazonas desde 2000.</p></section>';
     }
 
     // Dinheiro
