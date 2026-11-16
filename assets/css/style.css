@@ -440,3 +440,4 @@ a.barras__rot:hover { color: var(--accent); }
 
 /* Partidos: barra proporcional à coluna escolhida */
 .pt-barra { display: block; height: 3px; background: var(--accent); margin-top: 0.3rem; max-width: 10rem; }
+.masthead__logo--nex { width: auto; }
