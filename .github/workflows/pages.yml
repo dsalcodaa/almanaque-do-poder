@@ -57,6 +57,7 @@ jobs:
             echo "Sem mudanças nos dados."
           else
             git commit -m "dados: atualização automática $(date -u +%F)"
+            git pull --rebase origin main
             git push
           fi
 

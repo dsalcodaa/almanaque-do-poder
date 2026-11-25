@@ -6,7 +6,7 @@ Enquanto ela estiver vazia, o site usa uma assinatura tipográfica. Nenhum símb
 
 ## Como aplicar a marca oficial
 
-1. **Logotipo:** salve o arquivo como `brand/nex/logo.svg`. O script `assets/js/nex-brand.js` detecta o arquivo e troca a assinatura tipográfica pelo logotipo em todas as páginas.
+1. **Logotipo:** o arquivo oficial está em `assets/img/logo-nex.png`. O script `assets/js/nex-brand.js` detecta o arquivo e troca a assinatura tipográfica pelo logotipo em todas as páginas.
 2. **Cores e tipografia:** edite as variáveis `--nex-*` em `assets/css/tokens.css`:
    - `--nex-ink`: cor principal da marca
    - `--nex-muted`: cor secundária

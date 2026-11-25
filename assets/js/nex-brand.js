@@ -1,6 +1,6 @@
 /*
  * Troca a assinatura tipográfica da NEX pelo logotipo oficial,
- * mas só se o arquivo brand/nex/logo.svg existir no repositório.
+ * usando o arquivo assets/img/logo-nex.png.
  * Sem o arquivo, a assinatura tipográfica continua visível.
  */
 (function () {
@@ -8,7 +8,7 @@
   if (!signatures.length) return;
 
   var root = document.documentElement.getAttribute("data-root") || "";
-  var src = root + "brand/nex/logo.svg";
+  var src = root + "assets/img/logo-nex.png";
   var probe = new Image();
 
   probe.onload = function () {
