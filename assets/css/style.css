@@ -169,7 +169,7 @@ a:hover { color: var(--accent); }
   line-height: 1.25;
 }
 .nex-signature__name b { font-weight: 700; letter-spacing: 0.04em; }
-.nex-signature__logo { display: block; height: var(--nex-logo-height); width: auto; }
+.nex-signature__logo { display: block; align-self: flex-start; height: var(--nex-logo-height); width: auto; }
 .nex-signature.has-logo .nex-signature__wordmark { display: none; }
 
 /* ---------- Rodapé ---------- */
