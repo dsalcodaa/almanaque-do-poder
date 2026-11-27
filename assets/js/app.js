@@ -554,6 +554,48 @@
     }).join("") + "</ul></section>";
   }
 
+  // ---------- discursos e mandatos federais anteriores ----------
+  function discursosHTML(d, casa, sub) {
+    if (!d || !d.total) return "";
+    var anos = Object.keys(d.por_ano || {}).sort().reverse();
+    var porAno = {};
+    anos.forEach(function (a) { porAno[a] = d.por_ano[a]; });
+    return '<section class="section"><p class="kicker">Pronunciamentos</p><h2 class="h2">' + esc(sub || "Discursos no Plenário") + "</h2>" +
+      '<ul class="pillars"><li class="pillar"><span class="pillar__index">' + num(d.total) + '</span><p class="pillar__text">' + (d.total === 1 ? "discurso registrado" : "discursos registrados") + (anos.length > 1 ? " de " + anos[anos.length - 1] + " a " + anos[0] : anos.length ? " em " + anos[0] : "") + "</p></li></ul>" +
+      '<h3 class="eleitos__cargo" style="margin-top: var(--space-4);">Por ano</h3>' + barras(porAno, num, "", 40) +
+      '<h3 class="eleitos__cargo" style="margin-top: var(--space-4);">Por tipo de fala</h3>' + barras(d.por_tipo, num, "", 10) +
+      (d.recentes && d.recentes.length ? '<h3 class="eleitos__cargo" style="margin-top: var(--space-4);">Mais recentes</h3><ul class="ledger">' + d.recentes.map(function (x) {
+        return '<li><span class="ledger__key">' + esc(dataBR(x.data)) + "</span><span>" + (x.url ? '<a href="' + esc(x.url) + '" target="_blank" rel="noopener">' + esc(x.tipo) + "</a>" : esc(x.tipo)) +
+          (x.sumario ? '<span class="ledger__sub">' + esc(x.sumario) + "</span>" : "") + "</span></li>";
+      }).join("") + "</ul>" : "") +
+      '<p class="muted">Fonte: ' + (casa === "senado" ? "Senado Federal, dados abertos (pronunciamentos no Plenário do Senado e do Congresso)." : "Câmara dos Deputados, dados abertos (discursos no Plenário; falas em comissões não entram).") + "</p></section>";
+  }
+  function itemNorma(n) {
+    return '<li><span class="ledger__key">' + esc(mesAno(n.data)) + '</span><span><a href="' + esc(n.url) + '" target="_blank" rel="noopener">' + esc(n.tipo) + (n.numero && n.numero !== "s/n" ? " nº " + esc(n.numero) + (n.casa === "camara" && n.ano ? "/" + esc(n.ano) : "") : "") + "</a> — " + esc(n.ementa) +
+      ' <span class="tag' + (HOMENAGENS.indexOf(n.categoria) >= 0 ? " tag--accent" : "") + '">' + esc(n.categoria) + "</span>" +
+      (n.proposicao ? '<span class="ledger__sub">Origem: <a href="' + esc(n.url_proposicao) + '" target="_blank" rel="noopener">' + esc(n.proposicao) + "</a>" + (n.revogada ? " · revogada" : "") + "</span>" : "") + "</span></li>";
+  }
+  function federalHTML(f) {
+    if (!f) return "";
+    var anos = f.mandatos.map(function (m) { return m.inicio.slice(0, 4) + "–" + m.fim.slice(0, 4); });
+    var h = '<section class="section"><p class="kicker">Mandatos anteriores</p><h2 class="h2">Deputado(a) federal pelo Amazonas</h2>' +
+      '<ul class="ledger">' + f.mandatos.map(function (m) {
+        return '<li><span class="ledger__key">' + esc(m.inicio.slice(0, 4) + "–" + m.fim.slice(0, 4)) + "</span><span>" + esc(m.legislatura) + "ª legislatura" + (m.partidos.length ? " · " + esc(m.partidos.join(", ")) : "") + "</span></li>";
+      }).join("") + "</ul>" +
+      '<ul class="pillars" style="margin-top: var(--space-3);"><li class="pillar"><span class="pillar__index">' + num(f.proposicoes) + '</span><p class="pillar__text">proposições apresentadas (PL, PLP, PEC e PDL, autoria ou coautoria)</p></li>' +
+      '<li class="pillar"><span class="pillar__index">' + num(f.normas) + '</span><p class="pillar__text">' + (f.normas === 1 ? "virou norma" : "viraram norma") + " com autoria principal</p></li>" +
+      '<li class="pillar"><span class="pillar__index pillar__index--accent">' + num(f.discursos.total) + '</span><p class="pillar__text">discursos no Plenário da Câmara</p></li></ul>';
+    if (f.lista_normas.length) h += '<h3 class="eleitos__cargo" style="margin-top: var(--space-4);">Normas aprovadas</h3><ul class="ledger">' + f.lista_normas.map(itemNorma).join("") + "</ul>";
+    h += '<p class="muted">Período: ' + esc(anos.join(", ")) + '. Fonte: <a href="' + esc(f.fonte) + '" target="_blank" rel="noopener">Câmara dos Deputados</a>, arquivos de proposições e API de discursos. A norma conta só para o primeiro autor do projeto.</p></section>';
+    return h + discursosHTML(f.discursos, "camara", "Discursos nesses mandatos");
+  }
+  function mostrarFederal(id) {
+    carregar("federal-historico.json").then(function (x) {
+      var box = $("#federal");
+      if (box) box.outerHTML = federalHTML(x[id]);
+    }).catch(function () { var box = $("#federal"); if (box) box.remove(); });
+  }
+
   // ---------- perfil ----------
   function paginaPessoa(alvo, id, pol) {
     var atual = pol.find(function (x) { return x.pessoa === id; });
@@ -579,10 +621,10 @@
       if (pe.ocupacao || pe.instrucao) cr.push([pe.ocupacao || "—", pe.instrucao || ""]);
       h += acoesPerfil(true) + crachaHTML(cr);
       h += historicoHTML(pe);
-      h += '<div id="territorio"></div><div id="doacoes"></div>';
+      h += '<div id="federal"></div><div id="territorio"></div><div id="doacoes"></div>';
       h += '<section class="section"><p class="kicker">Mandato</p><h2 class="h2">Votações, presença e gastos</h2><p class="prose">' +
         (ganhas.length
-          ? "Não há registros de votações, presença ou gastos para este nome no site. Esses dados só existem a partir de 2023 e só para quem exerceu mandato na Câmara Municipal de Manaus, na Assembleia Legislativa, na Câmara dos Deputados ou no Senado. Câmaras dos outros municípios não publicam esses dados em formato aberto. Mandatos anteriores a 2023 ainda não foram incluídos."
+          ? "Não há registros de votações, presença ou gastos para este nome no site. Esses dados só existem a partir de 2023 e só para quem exerceu mandato na Câmara Municipal de Manaus, na Assembleia Legislativa, na Câmara dos Deputados ou no Senado. Câmaras dos outros municípios não publicam esses dados em formato aberto. De mandatos anteriores a 2023, o site traz por enquanto só as leis e os discursos de quem foi deputado federal pelo Amazonas desde 1999."
           : "Sem mandato conquistado nas eleições registradas pelo TSE, por isso não há votações, presença ou gastos de gabinete.") +
         '</p><p><a href="gastos.html">Pesquisar o nome nos gastos de gabinete</a> · <a href="diario.html">Buscar no Diário Oficial</a></p></section>';
       alvo.innerHTML = h;
@@ -590,6 +632,7 @@
         linha: [u.partido, "última candidatura: " + u.cargo + " em " + u.ano].filter(Boolean).join(" · "), fotos: pe.foto ? [pe.foto] : [], numeros: cr });
       carregarDoacoes(id).then(function (d) { var box = $("#doacoes"); if (box) box.outerHTML = doacoesHTML(d); aplicarCargo(); });
       mostrarTerritorio(id);
+      mostrarFederal(id);
     }).catch(function (e) { erro(alvo, e); });
   }
 
@@ -609,6 +652,7 @@
           }).catch(function () {});
           carregarDoacoes(p.pessoa).then(function (d) { var box = $("#doacoes"); if (box) box.outerHTML = doacoesHTML(d); aplicarCargo(); });
           mostrarTerritorio(p.pessoa);
+          mostrarFederal(p.pessoa);
         }, 0);
       }
       var m = p.metricas;
@@ -642,7 +686,7 @@
           h += '<li class="pillar"><span class="pillar__index">' + num(m.normas) + '</span><p class="pillar__text">normas aprovadas como primeiro autor</p></li>' +
             '<li class="pillar"><span class="pillar__index pillar__index--accent">' + num(m.homenagens) + '</span><p class="pillar__text">são homenagem, título, data comemorativa, denominação ou utilidade pública</p></li>';
         } else {
-          h += '<li class="pillar"><span class="pillar__index">—</span><p class="pillar__text">normas aprovadas: a API da Câmara não informa quais proposições viraram lei</p></li>';
+          h += '<li class="pillar"><span class="pillar__index">—</span><p class="pillar__text">normas aprovadas: dado ainda não coletado para este cargo</p></li>';
         }
         h += "</ul></section>";
 
@@ -695,6 +739,8 @@
           }).join("") + '</ul><p class="muted">Últimas 15 votações. Fonte: ' + esc(FONTE_VOTOS[p.casa] || "registros oficiais.") + "</p></section>";
       }
 
+      h += discursosHTML(p.discursos, p.casa);
+
       if (p.cota) {
         var anoC = ultimoAno(p.cota), c = p.cota[anoC], cat1 = Object.keys(c.por_categoria || {})[0];
         h += '<section class="section"><p class="kicker">Cota parlamentar</p><h2 class="h2">Dinheiro do gabinete em ' + esc(anoC) + "</h2>" +
@@ -725,7 +771,7 @@
           '<p><a href="diario.html?politico=' + encodeURIComponent(p.id) + '">Ver todas as citações</a></p></section>';
       }
 
-      if (p.pessoa) h += '<div id="historico"></div><div id="territorio"></div><div id="doacoes"></div>';
+      if (p.pessoa) h += '<div id="historico"></div><div id="federal"></div><div id="territorio"></div><div id="doacoes"></div>';
 
       var em = p.emendas;
       if (em) {
@@ -750,10 +796,7 @@
 
       if (normas.length) {
         h += '<section class="section"><p class="kicker">As leis</p><h2 class="h2">Normas aprovadas</h2><ul class="ledger">';
-        normas.slice(0, 30).forEach(function (n) {
-          h += '<li><span class="ledger__key">' + esc(mesAno(n.data)) + '</span><span><a href="' + esc(n.url) + '" target="_blank" rel="noopener">' + esc(n.tipo) + " nº " + esc(n.numero) + "</a> — " + esc(n.ementa) +
-            ' <span class="tag' + (HOMENAGENS.indexOf(n.categoria) >= 0 ? " tag--accent" : "") + '">' + esc(n.categoria) + "</span></span></li>";
-        });
+        normas.slice(0, 30).forEach(function (n) { h += itemNorma(n); });
         h += "</ul>";
         if (normas.length > 30) h += '<p><a href="leis.html?autor=' + encodeURIComponent(p.id) + '">Ver todas as ' + normas.length + " normas</a></p>";
         h += "</section>";
@@ -935,6 +978,7 @@
         { grupo: "Produção legislativa", titulo: "Mais homenagens aprovadas", accent: true, val: function (p) { return p.metricas ? p.metricas.homenagens : null; }, fmt: num, nota: "Títulos, datas, denominações, honrarias e utilidade pública." },
         { grupo: "Produção legislativa", titulo: "Maior parcela de homenagens", accent: true, val: function (p) { return p.metricas && p.metricas.normas >= 3 ? pctHomenagem(p) : null; }, fmt: pct100, nota: "Entre quem aprovou pelo menos 3 normas." },
         { grupo: "Produção legislativa", titulo: "Menor parcela de homenagens", inverso: true, val: function (p) { return p.metricas && p.metricas.normas >= 3 ? pctHomenagem(p) : null; }, fmt: pct100, nota: "Entre quem aprovou pelo menos 3 normas." },
+        { grupo: "Produção legislativa", titulo: "Mais discursos em Plenário", val: function (p) { return p.discursos ? p.discursos.total : null; }, fmt: num, nota: "Deputados federais e senadores, desde fevereiro de 2023." },
         { grupo: "Produção legislativa", titulo: "Mais citado no Diário Oficial", val: function (p) { return p.diario ? p.diario.total : null; }, fmt: num, nota: "Últimos 12 meses: ALEAM, CMM e Estado." },
         { grupo: "Eleição e patrimônio", titulo: "Mais votados", val: function (p) { return p.eleicao ? p.eleicao.votos : null; }, fmt: num, nota: "Eleição mais recente que disputou." },
         { grupo: "Eleição e patrimônio", titulo: "Maior patrimônio declarado", accent: true, val: function (p) { return p.eleicao ? p.eleicao.patrimonio : null; }, fmt: reais, nota: "Bens declarados ao TSE." },

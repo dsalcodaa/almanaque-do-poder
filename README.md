@@ -63,6 +63,8 @@ python -m http.server 8000
 | Tribunais e Ministério Público | DadosJusBr (TJAM, MPAM, TRT-11, TRE-AM) e contracheques em PDF do TCE-AM; coleta semestral |
 | Partidos | Gerado do histórico do TSE e das doações na consolidação (`data/partidos.json` e `data/partidos/`); siglas antigas agrupadas na sucessora |
 | Votos por município e bairro | TSE: `votacao_candidato_munzona`, `votacao_secao` e locais de votação (`votos_territorio`) |
+| Leis aprovadas e discursos (federal) | Arquivos anuais de proposições e autores da Câmara, API de discursos da Câmara e do Senado (`federal`); data, ementa e link das leis do acervo ctresb/leis (pasta irmã `../leis` ou `LEIS_REPO`), com cache em `data/fontes/leis_federais.json` |
+| Mandatos federais de 1999 a 2023 | Câmara dos Deputados, legislaturas 51 a 56: normas, proposições e discursos de quem foi deputado pelo AM (`camara_historico`, gera `data/federal-historico.json`) |
 
 Para atualizar os dados localmente:
 
@@ -73,6 +75,7 @@ python scripts/coletar.py eleicoes   # votos e patrimônio (TSE, arquivos grande
 python scripts/coletar.py tse_historico  # histórico, fotos e municípios (TSE desde 2000; não roda no Actions)
 python scripts/coletar.py doacoes        # financiadores e gastos de campanha (TSE desde 2018; rode depois do histórico)
 python scripts/coletar.py votos_territorio  # votos por município e bairro (TSE; baixa cerca de 500 MB na primeira vez)
+python scripts/coletar.py camara_historico  # mandatos federais do AM de 1999 a 2023 (Câmara; baixa cerca de 1 GB na primeira vez)
 python scripts/coletar.py tribunais      # força a coleta dos tribunais (normalmente roda a cada seis meses)
 ```
 

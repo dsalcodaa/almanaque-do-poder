@@ -22,6 +22,7 @@ import csv
 import html
 import io
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -1311,6 +1312,296 @@ def coletar_senado_atividade() -> dict:
     return {"atividade": resumo, "notas": notas}
 
 
+# ------------------------------------- Leis aprovadas e discursos (federal)
+
+ARQ_CAMARA = "https://dadosabertos.camara.leg.br/arquivos"
+TIPOS_CAMARA = ("PL", "PLP", "PEC", "PDL")
+# "Transformado na Lei Ordinária 14057/2020", "Transformada na Emenda Constitucional 109/2021"
+RE_NORMA = re.compile(r"Transformad[oa] n[oa] (Lei Ordin[aá]ria|Lei Complementar|Emenda Constitucional|Decreto Legislativo|Resolu[cç][aã]o)"
+                      r"\s*(?:n[º°o.]*\s*)?([\d.]+)\s*/\s*(\d{4})", re.I)
+# Repositório local de legislação em Markdown (github.com/ctresb/leis), usado para a data,
+# a ementa oficial e o link de cada lei. Sem ele, vale o cache de data/fontes/leis_federais.json.
+LEIS_REPO = Path(os.environ.get("LEIS_REPO") or RAIZ.parent / "leis")
+PASTA_LEIS = {"Lei Ordinária": "leis-ordinarias", "Lei Complementar": "leis-complementares"}
+
+
+def csv_camara(tabela: str, ano: int, guardar: bool = False) -> list[dict]:
+    """Arquivo anual da Câmara (proposicoes, proposicoesAutores). Com guardar, fica em .cache."""
+    url = f"{ARQ_CAMARA}/{tabela}/csv/{tabela}-{ano}.csv"
+    destino = CACHE / f"camara_{tabela}_{ano}.csv"
+    if not (guardar and destino.exists() and ano < date.today().year - 1):
+        baixar_retomando(url, destino)
+    b = destino.read_bytes()
+    if not guardar:
+        destino.unlink()
+    return list(csv.DictReader(io.StringIO(b.decode("utf-8-sig")), delimiter=";"))
+
+
+def baixar_retomando(url: str, destino: Path, tentativas: int = 8) -> None:
+    """Arquivo grande direto para o disco; se a conexão cair, continua de onde parou (Range)."""
+    destino.parent.mkdir(parents=True, exist_ok=True)
+    tmp = destino.with_suffix(destino.suffix + ".parcial")
+    tmp.unlink(missing_ok=True)
+    for i in range(tentativas):
+        feito = tmp.stat().st_size if tmp.exists() else 0
+        cab = {"User-Agent": UA}
+        if feito:
+            cab["Range"] = f"bytes={feito}-"
+        try:
+            with urllib.request.urlopen(urllib.request.Request(url, headers=cab), timeout=300) as r:
+                total = r.headers.get("Content-Length")
+                if feito and r.status != 206:  # servidor ignorou o Range: recomeça
+                    feito = 0
+                with tmp.open("ab" if feito else "wb") as f:
+                    shutil.copyfileobj(r, f, 1 << 20)
+            if total is None or tmp.stat().st_size >= feito + int(total):
+                tmp.replace(destino)
+                return
+        except Exception as e:  # noqa: BLE001
+            log(f"[download] {url}: {e} (tentativa {i + 1})")
+            time.sleep(3 * (i + 1))
+    raise RuntimeError(f"falha ao baixar {url}")
+
+
+def jget_lento(url: str):
+    """APIs que respondem 429 quando recebem pedidos seguidos."""
+    for i in range(6):
+        try:
+            time.sleep(0.35)
+            req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept": "application/json"})
+            with urllib.request.urlopen(req, timeout=120) as r:
+                return json.loads(r.read())
+        except urllib.error.HTTPError as e:
+            if e.code not in (429, 500, 502, 503, 504) or i == 5:
+                raise
+            time.sleep(8 * (i + 1))
+        except (urllib.error.URLError, TimeoutError):
+            if i == 5:
+                raise
+            time.sleep(5 * (i + 1))
+
+
+def lei_do_repo(tipo: str, numero: str, ano: str, cache: dict) -> dict | None:
+    chave = f"{tipo}|{numero}|{ano}"
+    if chave in cache:
+        return cache[chave]
+    pasta = PASTA_LEIS.get(tipo)
+    if not pasta or not LEIS_REPO.exists():
+        return None
+    achados = sorted((LEIS_REPO / "federal" / pasta / ano).glob(f"*-{numero}-{ano}-*.md"))
+    if not achados:
+        cache[chave] = None
+        return None
+    cab = achados[0].read_text(encoding="utf-8").split("---")[1]
+    campos = {}
+    for linha_ in cab.splitlines():
+        m = re.match(r'^(\w+):\s*"?(.*?)"?\s*$', linha_)
+        if m:
+            campos[m.group(1)] = m.group(2).replace('\\"', '"')
+    cache[chave] = {"data": campos.get("data"), "ementa": campos.get("ementa"), "url": campos.get("fonte"),
+                    "revogada": campos.get("revogada") == "true"}
+    return cache[chave]
+
+
+def norma_da_proposicao(prop: dict) -> tuple[str, str, str] | None:
+    """Tipo, número e ano da norma em que a proposição se transformou."""
+    m = RE_NORMA.search(prop.get("ultimoStatus_despacho") or "")
+    if not m:
+        try:
+            tram = jget_lento(f"{CAMARA}/proposicoes/{prop['id']}/tramitacoes")["dados"]
+        except Exception as e:  # noqa: BLE001
+            log(f"[federal] tramitação {prop['id']}: {e}")
+            tram = []
+        for t in reversed(tram):
+            m = RE_NORMA.search((t.get("despacho") or "") + " " + (t.get("descricaoTramitacao") or ""))
+            if m:
+                break
+    if not m:
+        return None
+    tipo = {"lei ordinaria": "Lei Ordinária", "lei complementar": "Lei Complementar", "emenda constitucional": "Emenda Constitucional",
+            "decreto legislativo": "Decreto Legislativo"}.get(sem_acento(m.group(1)), "Resolução")
+    return tipo, m.group(2).replace(".", ""), m.group(3)
+
+
+def leis_camara(ids: dict, anos, desde: str | None = None, guardar: bool = False, periodos: dict | None = None) -> dict:
+    """Proposições (PL, PLP, PEC, PDL) e normas aprovadas de cada deputado, pelos arquivos anuais da Câmara.
+
+    ids: id da Câmara -> id no site. Proposições contam autoria ou coautoria; norma conta só
+    para o primeiro autor (ordem de assinatura 1). periodos limita cada deputado às datas de mandato."""
+    out = {pid: {"tipos": Counter(), "normas": []} for pid in ids.values()}
+    cache_leis = (ler("fontes/leis_federais.json") or {})
+    for ano in anos:
+        autores = defaultdict(list)
+        for r in csv_camara("proposicoesAutores", ano, guardar):
+            if r.get("idDeputadoAutor") in ids:
+                autores[r["idProposicao"]].append((ids[r["idDeputadoAutor"]], r.get("ordemAssinatura") == "1"))
+        if not autores:
+            continue
+        for prop in csv_camara("proposicoes", ano, guardar):
+            if prop["id"] not in autores or prop.get("siglaTipo") not in TIPOS_CAMARA:
+                continue
+            apres = (prop.get("dataApresentacao") or "")[:10]
+            if desde and apres < desde:
+                continue
+            for pid, primeiro in autores[prop["id"]]:
+                if periodos and not any(i <= apres <= f for i, f in periodos.get(pid, [])):
+                    continue
+                out[pid]["tipos"][prop["siglaTipo"]] += 1
+                if not primeiro or "norma" not in sem_acento(prop.get("ultimoStatus_descricaoSituacao") or ""):
+                    continue
+                n = norma_da_proposicao(prop)
+                tipo, numero, ano_n = n or ("Norma jurídica", "s/n", (prop.get("ultimoStatus_dataHora") or "")[:4])
+                extra = lei_do_repo(tipo, numero, ano_n, cache_leis) or {}
+                ementa = re.sub(r"\s+", " ", extra.get("ementa") or prop.get("ementa") or "").strip()
+                urn = prop.get("urnFinal")
+                out[pid]["normas"].append({
+                    "id": f"camara-n{prop['id']}",
+                    "casa": "camara",
+                    "tipo": tipo,
+                    "numero": f"{int(numero):,}".replace(",", ".") if numero.isdigit() and tipo.startswith("Lei") else numero,
+                    "ano": ano_n,
+                    "data": extra.get("data") or (prop.get("ultimoStatus_dataHora") or "")[:10],
+                    "ementa": ementa[:500],
+                    "categoria": categoria(ementa),
+                    "autor": pid,
+                    "proposicao": f"{prop['siglaTipo']} {prop['numero']}/{prop['ano']}",
+                    "url_proposicao": f"https://www.camara.leg.br/propostas-legislativas/{prop['id']}",
+                    "url": extra.get("url") or (f"https://normas.leg.br/?urn={urn}" if urn else f"https://www.camara.leg.br/propostas-legislativas/{prop['id']}"),
+                    "revogada": extra.get("revogada"),
+                })
+        log(f"[federal] proposições {ano}")
+    salvar("fontes/leis_federais.json", cache_leis)
+    return out
+
+
+def resumo_discursos(lista: list[dict]) -> dict:
+    lista.sort(key=lambda d: d["data"], reverse=True)
+    return {"total": len(lista),
+            "por_ano": dict(sorted(Counter(d["data"][:4] for d in lista).items())),
+            "por_tipo": dict(Counter(d["tipo"] for d in lista).most_common()),
+            "recentes": lista[:10]}
+
+
+def discursos_camara(dep_id: str, inicio: str, fim: str) -> list[dict]:
+    """Discursos no Plenário (a API aceita no máximo um ano por consulta)."""
+    out = []
+    a = date.fromisoformat(inicio)
+    fim_d = min(date.fromisoformat(fim), date.today())
+    while a <= fim_d:
+        b = min(date(a.year, 12, 31), fim_d)
+        url = f"{CAMARA}/deputados/{dep_id}/discursos?dataInicio={a}&dataFim={b}&itens=100"
+        while url:
+            pg = jget_lento(url)
+            for d in pg["dados"]:
+                out.append({"data": (d.get("dataHoraInicio") or "")[:10],
+                            "tipo": (d.get("tipoDiscurso") or "Outros").strip().capitalize(),
+                            "sumario": re.sub(r"\s+", " ", d.get("sumario") or "").strip()[:400] or None,
+                            "url": d.get("urlTexto") or None})
+            url = next((l["href"] for l in pg["links"] if l["rel"] == "next"), None)
+        a = date(a.year + 1, 1, 1)
+    return out
+
+
+def discursos_senado(cod: str, inicio: str, fim: str) -> list[dict]:
+    out = []
+    a = date.fromisoformat(inicio)
+    fim_d = min(date.fromisoformat(fim), date.today())
+    while a <= fim_d:
+        b = min(date(a.year, 12, 31), fim_d)
+        j = jget_lento(f"{SENADO}/senador/{cod}/discursos.json?dataInicio={a:%Y%m%d}&dataFim={b:%Y%m%d}")
+        ps = ((j.get("DiscursosParlamentar") or {}).get("Parlamentar") or {}).get("Pronunciamentos") or {}
+        ps = ps.get("Pronunciamento") or []
+        for d in ps if isinstance(ps, list) else [ps]:
+            out.append({"data": d.get("DataPronunciamento") or "",
+                        "tipo": ((d.get("TipoUsoPalavra") or {}).get("Descricao") or "Outros").strip(),
+                        "sumario": re.sub(r"\s+", " ", d.get("TextoResumo") or "").strip()[:400] or None,
+                        "url": https(d.get("UrlTexto") or d.get("UrlTextoBinario")) or None})
+        a = date(a.year + 1, 1, 1)
+    return out
+
+
+def resumo_normas(normas: list[dict]) -> dict:
+    cats = Counter(n["categoria"] for n in normas)
+    return {"normas": len(normas), "homenagens": sum(v for k, v in cats.items() if k in HOMENAGENS),
+            "normas_categoria": dict(cats.most_common())}
+
+
+def coletar_federal() -> dict:
+    """Normas aprovadas dos deputados federais e discursos de deputados e senadores do AM, desde 2023."""
+    inicio = "2023-02-01"
+    deps = (ler("fontes/camara.json") or {}).get("politicos", [])
+    sens = (ler("fontes/senado.json") or {}).get("politicos", [])
+    ids = {p["id"].split("-", 1)[1]: p["id"] for p in deps}
+    leis = leis_camara(ids, range(2023, date.today().year + 1), desde=inicio)
+    normas, metricas, discursos = [], {}, {}
+    for pid, x in leis.items():
+        normas += x["normas"]
+        metricas[pid] = resumo_normas(x["normas"])
+    for cod, pid in ids.items():
+        discursos[pid] = resumo_discursos(discursos_camara(cod, inicio, HOJE))
+        log(f"[federal] {pid}: {metricas[pid]['normas']} normas, {discursos[pid]['total']} discursos")
+    for p in sens:
+        discursos[p["id"]] = resumo_discursos(discursos_senado(p["id"].split("-", 1)[1], inicio, HOJE))
+        log(f"[federal] {p['id']}: {discursos[p['id']]['total']} discursos")
+    return {"politicos": [], "normas": normas, "metricas": metricas, "discursos": discursos}
+
+
+def coletar_camara_historico() -> dict:
+    """Mandatos de deputado federal pelo AM de 1999 a jan/2023 (legislaturas 51 a 56): normas
+    aprovadas como primeiro autor, proposições e discursos. Ligado à pessoa do histórico do TSE.
+    Sob demanda: baixa os arquivos anuais de proposições da Câmara (guardados em .cache)."""
+    legs = {}
+    for n in range(51, 57):
+        lg = jget_lento(f"{CAMARA}/legislaturas/{n}")["dados"]
+        legs[n] = (lg["dataInicio"], lg["dataFim"])
+    deps = {}
+    for n in legs:
+        for d in jget_lento(f"{CAMARA}/deputados?idLegislatura={n}&siglaUf=AM&itens=100")["dados"]:
+            x = deps.setdefault(str(d["id"]), {"nome": d["nome"], "legislaturas": {}, "foto": https(d.get("urlFoto"))})
+            x["legislaturas"].setdefault(n, set()).add(d.get("siglaPartido"))
+    indice = ler("pessoas/indice.json") or []
+    validos = {r[0] for r in indice}
+    por_civil = defaultdict(list)
+    for r in indice:
+        por_civil[re.sub(r"[^a-z]", "", sem_acento(r[2]))].append(r[0])
+    out = {}
+    for cod, x in deps.items():
+        info = jget_lento(f"{CAMARA}/deputados/{cod}")["dados"]
+        civil, nasc = info.get("nomeCivil") or x["nome"], info.get("dataNascimento") or ""
+        nasc_br = "/".join(reversed(nasc.split("-"))) if nasc else ""
+        pessoa = id_pessoa(civil, nasc_br) if nasc_br else None
+        if pessoa not in validos:
+            cands = por_civil.get(re.sub(r"[^a-z]", "", sem_acento(civil)), [])
+            pessoa = cands[0] if len(cands) == 1 else None
+        x["nome"] = titulo((info.get("ultimoStatus") or {}).get("nome") or x["nome"])
+        x.update({"camara_id": cod, "nome_civil": titulo(civil), "nascimento": nasc_br, "pessoa": pessoa})
+        x["periodos"] = [legs[n] for n in sorted(x["legislaturas"])]
+    ids = {cod: f"camara-{cod}" for cod in deps}
+    periodos = {f"camara-{c}": x["periodos"] for c, x in deps.items()}
+    leis = leis_camara(ids, range(1999, 2024), guardar=True, periodos=periodos)
+    for cod, x in deps.items():
+        pid = f"camara-{cod}"
+        disc = []
+        for ini, fim in x["periodos"]:
+            disc += discursos_camara(cod, ini, fim)
+        nor = sorted(leis[pid]["normas"], key=lambda n: n["data"] or "", reverse=True)
+        chave = x["pessoa"] or pid
+        out[chave] = {
+            "camara_id": cod, "nome": x["nome"], "nome_civil": x["nome_civil"], "pessoa": x["pessoa"],
+            "fonte": f"https://www.camara.leg.br/deputados/{cod}",
+            "mandatos": [{"legislatura": n, "inicio": legs[n][0], "fim": legs[n][1], "partidos": sorted(p for p in x["legislaturas"][n] if p)}
+                         for n in sorted(x["legislaturas"])],
+            "proposicoes": sum(leis[pid]["tipos"].values()),
+            "proposicoes_tipo": dict(leis[pid]["tipos"].most_common()),
+            **resumo_normas(nor),
+            "lista_normas": nor,
+            "discursos": resumo_discursos(disc),
+        }
+        log(f"[camara_historico] {x['nome']}: {len(x['legislaturas'])} legislaturas, {len(nor)} normas, {len(disc)} discursos, pessoa={x['pessoa']}")
+    salvar("federal-historico.json", out)
+    return {"deputados": len(out)}
+
+
 # ------------------------------------------------- Histórico eleitoral (TSE)
 
 ANOS_TSE = list(range(2000, date.today().year + 1, 2))
@@ -2418,9 +2709,11 @@ FONTES_INFO = {
     "acervo_leis": ("Acervo de leis: SAPL da ALEAM, da CMM e das câmaras, e Diário Oficial dos Municípios (AAM)", "https://www.diariomunicipal.com.br/aam/"),
     "tribunais": ("DadosJusBr e TCE-AM — Remuneração de membros do sistema de Justiça (coleta semestral)", "https://dadosjusbr.org"),
     "diarios": ("Diários oficiais: ALEAM, Câmara Municipal de Manaus e Estado do Amazonas", "https://diario.imprensaoficial.am.gov.br"),
+    "federal": ("Câmara e Senado — Leis aprovadas e discursos em Plenário", "https://dadosabertos.camara.leg.br/swagger/api.html#staticfile"),
+    "camara_historico": ("Câmara dos Deputados — Mandatos federais do AM de 1999 a 2023", "https://dadosabertos.camara.leg.br"),
 }
 # Fontes pesadas que só rodam quando pedidas pelo nome
-SOB_DEMANDA = {"eleicoes", "tse_historico", "doacoes", "votos_territorio"}
+SOB_DEMANDA = {"eleicoes", "tse_historico", "doacoes", "votos_territorio", "camara_historico"}
 
 
 def main() -> int:
@@ -2437,6 +2730,8 @@ def main() -> int:
         "diarios": coletar_diarios,  # depende das casas
         "presenca": coletar_presenca,
         "senado_atividade": coletar_senado_atividade,  # depende de senado
+        "federal": coletar_federal,  # depende de camara e senado
+        "camara_historico": coletar_camara_historico,  # sob demanda, depois do histórico do TSE
         "tribunais": coletar_tribunais,
         "tse_historico": coletar_tse_historico,  # sob demanda, lê os arquivos do TSE em .cache
         "doacoes": coletar_doacoes,  # sob demanda, depois do histórico
@@ -2483,6 +2778,7 @@ def main() -> int:
     ceap_aleam = ler("fontes/ceap_aleam.json") or {}
     presenca = (ler("fontes/presenca.json") or {}).get("presenca", {})
     senado_at = ler("fontes/senado_atividade.json") or {}
+    federal = ler("fontes/federal.json") or {}
     diarios = ler("fontes/diarios.json") or {}
     por_politico = defaultdict(list)
     for m in diarios.get("mencoes", []):
@@ -2506,6 +2802,10 @@ def main() -> int:
             p["presenca"], p["votacoes"], p["ausencias"] = a["presenca"], a["votos"], a["ausencias"]
             if a.get("cota"):
                 p["cota"] = a["cota"]
+        if p["id"] in federal.get("metricas", {}) and p.get("metricas"):
+            p["metricas"].update(federal["metricas"][p["id"]])
+        if p["id"] in federal.get("discursos", {}):
+            p["discursos"] = federal["discursos"][p["id"]]
         if p["id"] in ceap_aleam.get("cota", {}) and "cota" not in p:
             p["cota"] = ceap_aleam["cota"][p["id"]]
         if por_politico.get(p["id"]):
