@@ -134,12 +134,17 @@ def categoria(ementa: str) -> str:
 
 # ----------------------------------------------------------------- SAPL
 
+_SAPL_MEMO: dict | None = None  # ligado no histórico da ALEAM, que lê as mesmas listas a cada legislatura
+
+
 def sapl_paginas(base: str, caminho: str, params: dict | None = None, workers: int = 4) -> list[dict]:
     params = dict(params or {})
     params["page_size"] = 100
     # Sem ordem fixa a API repete e pula registros entre páginas
     params.setdefault("o", "id")
     url = f"{base}{caminho}?{urllib.parse.urlencode(params)}"
+    if _SAPL_MEMO is not None and url in _SAPL_MEMO:
+        return _SAPL_MEMO[url]
     primeira = jget(url)
     resultados = list(primeira["results"])
     total = primeira["pagination"]["total_pages"]
@@ -148,27 +153,53 @@ def sapl_paginas(base: str, caminho: str, params: dict | None = None, workers: i
         with ThreadPoolExecutor(workers) as ex:
             for pagina in ex.map(jget, urls):
                 resultados.extend(pagina["results"])
+    if _SAPL_MEMO is not None:
+        _SAPL_MEMO[url] = resultados
     return resultados
 
 
-def coletar_sapl(casa: str, base: str, cargo: str, esfera: str, municipio: str | None) -> dict:
-    log(f"[{casa}] SAPL {base}")
+def discursos_sapl(base: str) -> dict:
+    """Inscrições de cada parlamentar como orador no expediente e na ordem do dia das sessões."""
+    try:
+        sessoes = {s["id"]: s["data_inicio"] for s in sapl_paginas(base, "/api/sessao/sessaoplenaria/") if s.get("data_inicio")}
+        por = defaultdict(list)
+        for caminho, tipo in (("oradorexpediente", "Expediente"), ("oradorordemdia", "Ordem do Dia")):
+            for o in sapl_paginas(base, f"/api/sessao/{caminho}/"):
+                d = sessoes.get(o.get("sessao_plenaria"))
+                if d and o.get("parlamentar"):
+                    por[o["parlamentar"]].append({"data": d, "tipo": tipo,
+                                                  "sumario": re.sub(r"\s+", " ", o.get("observacao") or "").strip()[:400] or None,
+                                                  "url": o.get("url_discurso") or f"{base}/sessao/{o['sessao_plenaria']}"})
+        return por
+    except Exception as e:  # noqa: BLE001
+        log(f"[sapl] oradores de {base} indisponíveis: {e}")
+        return {}
+
+
+def coletar_sapl(casa: str, base: str, cargo: str, esfera: str, municipio: str | None, legislatura: dict | None = None) -> dict:
+    """Parlamentares, proposições e normas da legislatura atual ou, para o histórico, de uma legislatura passada."""
+    log(f"[{casa}] SAPL {base}" + (f" legislatura {legislatura['numero']}" if legislatura else ""))
     legis = sapl_paginas(base, "/api/parlamentares/legislatura/")
-    atual = next(
+    atual = legislatura or next(
         (lg for lg in legis if lg["data_inicio"] <= HOJE <= lg["data_fim"]),
         max(legis, key=lambda x: x["data_inicio"]),
     )
-    inicio = atual["data_inicio"]
-    ano_inicio = int(inicio[:4])
+    inicio, fim = atual["data_inicio"], atual["data_fim"]
+    ano_inicio, ano_fim = int(inicio[:4]), min(int(fim[:4]), date.today().year)
 
     mandatos = sapl_paginas(base, "/api/parlamentares/mandato/", {"legislatura": atual["id"]})
-    ids_mandato = {m["parlamentar"] for m in mandatos if (m.get("data_fim_mandato") or "9999") >= HOJE}
-    parlamentares = [p for p in sapl_paginas(base, "/api/parlamentares/parlamentar/", {"ativo": "True"}) if p["id"] in ids_mandato]
+    ids_mandato = {m["parlamentar"] for m in mandatos if legislatura or (m.get("data_fim_mandato") or "9999") >= HOJE}
+    parlamentares = [p for p in sapl_paginas(base, "/api/parlamentares/parlamentar/", {} if legislatura else {"ativo": "True"})
+                     if p["id"] in ids_mandato]
 
     partidos = {p["id"]: p["sigla"] for p in sapl_paginas(base, "/api/parlamentares/partido/")}
     filiacao = {}
     for f in sorted(sapl_paginas(base, "/api/parlamentares/filiacao/"), key=lambda f: f.get("data") or ""):
-        if not f.get("data_desfiliacao"):
+        if legislatura:
+            # Partidos em que esteve durante a legislatura
+            if (f.get("data") or "") <= fim and (f.get("data_desfiliacao") or "9999") >= inicio and partidos.get(f["partido"]):
+                filiacao.setdefault(f["parlamentar"], []).append(partidos[f["partido"]])
+        elif not f.get("data_desfiliacao"):
             filiacao[f["parlamentar"]] = partidos.get(f["partido"])
 
     autores = sapl_paginas(base, "/api/base/autor/")
@@ -185,14 +216,14 @@ def coletar_sapl(casa: str, base: str, cargo: str, esfera: str, municipio: str |
         if pid is None:
             continue
         m = re.search(r" - (.+?) nº \S+ de (\d{4})", a.get("__str__", ""))
-        if not m or int(m.group(2)) < ano_inicio:
+        if not m or not ano_inicio <= int(m.group(2)) <= ano_fim:
             continue
         props.setdefault(pid, Counter())[m.group(1).strip()] += 1
 
     # Normas publicadas desde o início da legislatura
     tipos = {t["id"]: t["descricao"] for t in sapl_paginas(base, "/api/norma/tiponormajuridica/")}
     normas_raw = []
-    for ano in range(ano_inicio, date.today().year + 1):
+    for ano in range(ano_inicio, ano_fim + 1):
         normas_raw += sapl_paginas(base, "/api/norma/normajuridica/", {"ano": ano})
     # Nome normalizado -> parlamentar, para ler a autoria escrita na indexação
     por_nome = {sem_acento(p["nome_parlamentar"]): p["id"] for p in parlamentares}
@@ -209,7 +240,7 @@ def coletar_sapl(casa: str, base: str, cargo: str, esfera: str, municipio: str |
     # A paginação do SAPL pode pular registros. Busca direto pelo projeto
     # a autoria das normas que ficaram sem autor.
     faltando = sorted({n["materia"] for n in normas_raw
-                       if n.get("materia") and n["materia"] not in materia_autor and (n.get("data") or "") >= inicio})
+                       if n.get("materia") and n["materia"] not in materia_autor and inicio <= (n.get("data") or "") <= fim})
     if faltando:
         log(f"[{casa}] buscando autoria de {len(faltando)} projetos")
 
@@ -235,7 +266,7 @@ def coletar_sapl(casa: str, base: str, cargo: str, esfera: str, municipio: str |
     normas = []
     por_parl: dict[int, list] = {}
     for n in normas_raw:
-        if (n.get("data") or "") < inicio:
+        if not inicio <= (n.get("data") or "") <= fim:
             continue
         # Decretos do Executivo não são produção legislativa
         if "executivo" in sem_acento(tipos.get(n["tipo"], "")):
@@ -263,6 +294,7 @@ def coletar_sapl(casa: str, base: str, cargo: str, esfera: str, municipio: str |
         if pid:
             por_parl.setdefault(pid, []).append(item)
 
+    oradores = discursos_sapl(base)
     politicos = []
     for p in parlamentares:
         minhas = por_parl.get(p["id"], [])
@@ -290,9 +322,73 @@ def coletar_sapl(casa: str, base: str, cargo: str, esfera: str, municipio: str |
                 "normas_categoria": dict(cats.most_common()),
                 "autoria": "primeiro autor",
             },
+            "discursos": resumo_discursos([d for d in oradores.get(p["id"], []) if inicio <= d["data"] <= fim]),
         })
     log(f"[{casa}] {len(politicos)} parlamentares, {len(normas)} normas")
     return {"politicos": politicos, "normas": normas, "legislatura": {"inicio": inicio, "fim": atual["data_fim"]}}
+
+
+def ligar_ambiguos(politicos: list[dict]) -> None:
+    """Segunda tentativa para quem ficou sem pessoa: o TSE às vezes tem a mesma pessoa com mais de
+    um id (grafia ou nascimento diferente). Usa nome civil e de urna, sem "Dep.", e fica com a
+    candidatura mais recente."""
+    indice = ler("pessoas/indice.json") or []
+    atuais = {x["id"]: x.get("pessoa") for x in ler("politicos.json") or []}
+    for p in politicos:
+        p["pessoa"] = p.get("pessoa") or atuais.get(p["id"])
+        if p.get("pessoa"):
+            continue
+        urna = sem_acento(re.sub(r"^(Dep(utad[oa])?\.?)\s+", "", p["nome"], flags=re.I))
+        civil = [r for r in indice if sem_acento(r[2]) == sem_acento(p.get("nome_completo") or "")]
+        por_urna = [r for r in indice if sem_acento(r[1]) == urna]
+        cands = [r for r in civil if r in por_urna] or civil or por_urna
+        if cands:
+            p["pessoa"] = max(cands, key=lambda r: r[4])[0]
+
+
+def coletar_aleam_historico() -> dict:
+    """Mandatos de deputado estadual nas legislaturas da ALEAM anteriores à atual (o SAPL tem
+    mandatos desde 2011 e oradores só de 2016 a mar/2020): proposições e normas como primeiro autor e
+    inscrições como orador. Ligado à pessoa do histórico do TSE. Sob demanda."""
+    global _SAPL_MEMO
+    base = "https://sapl.al.am.leg.br"
+    _SAPL_MEMO = {}
+    try:
+        legis = sorted(sapl_paginas(base, "/api/parlamentares/legislatura/"), key=lambda x: x["data_inicio"])
+        oradores = discursos_sapl(base)
+        out = {}
+        for lg in legis:
+            if lg["data_fim"] >= HOJE:
+                continue
+            r = coletar_sapl("aleam", base, "Deputado(a) estadual", "estadual", None, legislatura=lg)
+            if not r["politicos"]:
+                continue
+            ligar_pessoas(r["politicos"])
+            ligar_ambiguos(r["politicos"])
+            normas = defaultdict(list)
+            for n in r["normas"]:
+                normas[n["autor"]].append(n)
+            for p in r["politicos"]:
+                chave = p.get("pessoa") or p["id"]
+                x = out.setdefault(chave, {"casa": "aleam", "nome": re.sub(r"^Dep\.\s+", "", p["nome"]), "nome_civil": p["nome_completo"], "pessoa": p.get("pessoa"),
+                                           "fonte": p["fonte"], "mandatos": [], "proposicoes": 0, "proposicoes_tipo": Counter(),
+                                           "lista_normas": [], "_discursos": []})
+                x["mandatos"].append({"legislatura": lg["numero"], "inicio": lg["data_inicio"], "fim": lg["data_fim"],
+                                      "partidos": sorted(set(p["partido"] or []))})
+                x["proposicoes"] += p["metricas"]["proposicoes"]
+                x["proposicoes_tipo"].update(p["metricas"]["proposicoes_tipo"])
+                x["lista_normas"] += normas.get(p["id"], [])
+                x["_discursos"] += [d for d in oradores.get(int(p["id"].split("-")[1]), []) if lg["data_inicio"] <= d["data"] <= lg["data_fim"]]
+    finally:
+        _SAPL_MEMO = None
+    for x in out.values():
+        x["lista_normas"].sort(key=lambda n: n["data"] or "", reverse=True)
+        x["proposicoes_tipo"] = dict(x["proposicoes_tipo"].most_common())
+        x.update(resumo_normas(x["lista_normas"]))
+        x["discursos"] = resumo_discursos(x.pop("_discursos"))
+        log(f"[aleam_historico] {x['nome']}: {len(x['mandatos'])} legislaturas, {x['normas']} normas, {x['discursos']['total']} discursos, pessoa={x['pessoa']}")
+    salvar("estadual-historico.json", out)
+    return {"deputados": len(out)}
 
 
 # ------------------------------------------------------ Câmara dos Deputados
@@ -2711,9 +2807,10 @@ FONTES_INFO = {
     "diarios": ("Diários oficiais: ALEAM, Câmara Municipal de Manaus e Estado do Amazonas", "https://diario.imprensaoficial.am.gov.br"),
     "federal": ("Câmara e Senado — Leis aprovadas e discursos em Plenário", "https://dadosabertos.camara.leg.br/swagger/api.html#staticfile"),
     "camara_historico": ("Câmara dos Deputados — Mandatos federais do AM de 1999 a 2023", "https://dadosabertos.camara.leg.br"),
+    "aleam_historico": ("Assembleia Legislativa do Amazonas — Mandatos estaduais de 2011 a 2023 (SAPL)", "https://sapl.al.am.leg.br"),
 }
 # Fontes pesadas que só rodam quando pedidas pelo nome
-SOB_DEMANDA = {"eleicoes", "tse_historico", "doacoes", "votos_territorio", "camara_historico"}
+SOB_DEMANDA = {"eleicoes", "tse_historico", "doacoes", "votos_territorio", "camara_historico", "aleam_historico"}
 
 
 def main() -> int:
@@ -2732,6 +2829,7 @@ def main() -> int:
         "senado_atividade": coletar_senado_atividade,  # depende de senado
         "federal": coletar_federal,  # depende de camara e senado
         "camara_historico": coletar_camara_historico,  # sob demanda, depois do histórico do TSE
+        "aleam_historico": coletar_aleam_historico,  # sob demanda, depois do histórico do TSE
         "tribunais": coletar_tribunais,
         "tse_historico": coletar_tse_historico,  # sob demanda, lê os arquivos do TSE em .cache
         "doacoes": coletar_doacoes,  # sob demanda, depois do histórico

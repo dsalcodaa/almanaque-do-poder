@@ -65,6 +65,7 @@ python -m http.server 8000
 | Votos por município e bairro | TSE: `votacao_candidato_munzona`, `votacao_secao` e locais de votação (`votos_territorio`) |
 | Leis aprovadas e discursos (federal) | Arquivos anuais de proposições e autores da Câmara, API de discursos da Câmara e do Senado (`federal`); data, ementa e link das leis do acervo ctresb/leis (pasta irmã `../leis` ou `LEIS_REPO`), com cache em `data/fontes/leis_federais.json` |
 | Mandatos federais de 1999 a 2023 | Câmara dos Deputados, legislaturas 51 a 56: normas, proposições e discursos de quem foi deputado pelo AM (`camara_historico`, gera `data/federal-historico.json`) |
+| Mandatos estaduais de 2011 a 2023 | SAPL da ALEAM, legislaturas 17 a 19: normas e proposições como primeiro autor e inscrições como orador (o SAPL só tem de 2016 a mar/2020) (`aleam_historico`, gera `data/estadual-historico.json`) |
 
 Para atualizar os dados localmente:
 
@@ -76,6 +77,7 @@ python scripts/coletar.py tse_historico  # histórico, fotos e municípios (TSE 
 python scripts/coletar.py doacoes        # financiadores e gastos de campanha (TSE desde 2018; rode depois do histórico)
 python scripts/coletar.py votos_territorio  # votos por município e bairro (TSE; baixa cerca de 500 MB na primeira vez)
 python scripts/coletar.py camara_historico  # mandatos federais do AM de 1999 a 2023 (Câmara; baixa cerca de 1 GB na primeira vez)
+python scripts/coletar.py aleam_historico   # mandatos estaduais de 2011 a 2023 (SAPL da ALEAM)
 python scripts/coletar.py tribunais      # força a coleta dos tribunais (normalmente roda a cada seis meses)
 ```
 
